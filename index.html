@@ -433,6 +433,303 @@ body.fx-busy .maingrid button[data-act="card"],body.fx-busy .maingrid button[dat
 <body>
 
 <div id="app" class="shell" aria-live="polite"></div>
+<!-- BEGIN GENERATED rules -->
+<script>
+/* Pure classic rules. This source is also embedded verbatim in index.html. */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.SplendorRules = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+  const COLORS = ['w', 'u', 'g', 'r', 'k'], ALL = [...COLORS, 'y'];
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const count = player => ALL.reduce((sum, color) => sum + player.tokens[color], 0);
+
+  function create(catalogue) {
+    const byId = new Map(catalogue.map(card => [card.id, card]));
+    const marketCards = state => [3, 2, 1].flatMap(tier => state.market[tier]);
+    const findCard = (state, id, who) => marketCards(state).find(card => card.id === id)
+      || state.players[who]?.reserved.find(card => card.id === id) || null;
+    const phase = state => state.modal && !['discard', 'noble'].includes(state.modal.type) ? 'blocked'
+      : state.rulePhase || (state.modal?.type === 'discard' ? 'discard' : state.modal?.type === 'noble' ? 'noble' : 'action');
+    const validPlayer = (state, who) => Number.isInteger(who) && (who === 0 || who === 1)
+      && !!state.players?.[who];
+    const validTokens = values => values && ALL.every(color => Number.isInteger(values[color]) && values[color] >= 0);
+    const sameCard = (card, expected) => !!card && !!expected && card.id === expected.id
+      && card.tier === expected.tier && card.color === expected.color && card.score === expected.score
+      && COLORS.every(color => (card.cost?.[color] || 0) === (expected.cost?.[color] || 0));
+    const eligible = (state, who) => state.nobles.filter(noble => COLORS.every(color =>
+      (state.players[who].bonuses[color] || 0) >= (noble.req[color] || 0)));
+
+    function price(card, player) {
+      const req = {};let short = 0;
+      for (const color of COLORS) {
+        req[color] = Math.max(0, (card.cost[color] || 0) - (player.bonuses[color] || 0));
+        short += Math.max(0, req[color] - (player.tokens[color] || 0));
+      }
+      return { req, short, left: Math.max(0, short - (player.tokens.y || 0)) };
+    }
+
+    function canTake(state, pick) {
+      // Gold is never obtainable through a take action, even with two equal entries.
+      if (!Array.isArray(pick) || !pick.length || !Array.from(pick).every(color => COLORS.includes(color))
+        || !validTokens(state.bank)) return false;
+      const available = COLORS.filter(color => state.bank[color] > 0).length;
+      if (available > 0 && pick.length === Math.min(3, available) && new Set(pick).size === pick.length) {
+        return pick.every(color => state.bank[color] > 0);
+      }
+      return pick.length === 2 && pick[0] === pick[1] && state.bank[pick[0]] >= 4;
+    }
+
+    function validateAction(state, action, who = state.turn) {
+      const reject = reason => ({ ok: false, reason });
+      if (!validPlayer(state, who) || who !== state.turn) return reject('wrong_actor');
+      if (state.over) return reject('game_over');
+      if (!action || typeof action !== 'object' || Array.isArray(action)) return reject('invalid_action');
+      if (state.modal && !['discard', 'noble'].includes(state.modal.type)) return reject('modal_open');
+      if (!validTokens(state.bank) || !validTokens(state.players[who].tokens)) return reject('invalid_resources');
+      const player = state.players[who], current = phase(state);
+      if (['take', 'buy', 'reserve', 'blind_reserve'].includes(action.type)) {
+        if (current !== 'action') return reject('action_already_taken');
+        if (action.type === 'take') return canTake(state, action.colors) ? { ok: true } : reject('invalid_take');
+        if (action.type === 'blind_reserve') {
+          if (!Number.isInteger(action.tier) || ![1, 2, 3].includes(action.tier)) return reject('invalid_tier');
+          return player.reserved.length < 3 && state.deck[action.tier].length > 0
+            ? { ok: true } : reject('cannot_reserve');
+        }
+        if (typeof action.cardId !== 'string') return reject('invalid_card');
+        const card = findCard(state, action.cardId, who);
+        if (!sameCard(card, byId.get(action.cardId))) return reject('invalid_card');
+        if (action.type === 'buy') return price(card, player).left === 0 ? { ok: true } : reject('cannot_afford');
+        return player.reserved.length < 3 && marketCards(state).some(value => value.id === card.id)
+          ? { ok: true } : reject('cannot_reserve');
+      }
+      if (action.type === 'discard') {
+        return current === 'discard' && count(player) > 10 && ALL.includes(action.color) && player.tokens[action.color] > 0
+          ? { ok: true } : reject('invalid_discard');
+      }
+      if (action.type === 'noble') {
+        return current === 'noble' && Number.isInteger(action.id) && eligible(state, who).some(noble => noble.id === action.id)
+          ? { ok: true } : reject('invalid_noble');
+      }
+      return reject('unknown_action');
+    }
+
+    function legalActions(state, who = state.turn) {
+      if (!validPlayer(state, who) || who !== state.turn || state.over) return [];
+      let candidates = [], current = phase(state);
+      if (current === 'discard') candidates = ALL.map(color => ({ type: 'discard', color }));
+      else if (current === 'noble') candidates = eligible(state, who).map(noble => ({ type: 'noble', id: noble.id }));
+      else if (current === 'action') {
+        const available = COLORS.filter(color => state.bank[color] > 0);
+        if (available.length < 3) candidates.push({ type: 'take', colors: available });
+        else for (let i = 0; i < available.length; i++) for (let j = i + 1; j < available.length; j++) {
+          for (let k = j + 1; k < available.length; k++) candidates.push({ type: 'take', colors: [available[i], available[j], available[k]] });
+        }
+        candidates.push(...COLORS.map(color => ({ type: 'take', colors: [color, color] })));
+        candidates.push(...[...marketCards(state), ...state.players[who].reserved].map(card => ({ type: 'buy', cardId: card.id })));
+        candidates.push(...marketCards(state).map(card => ({ type: 'reserve', cardId: card.id })));
+        candidates.push(...[1, 2, 3].map(tier => ({ type: 'blind_reserve', tier })));
+      }
+      return candidates.filter(action => validateAction(state, action, who).ok);
+    }
+
+    function removeFace(state, card) {
+      const cards = state.market[card.tier], index = cards.findIndex(value => value.id === card.id);
+      const replacement = state.deck[card.tier].pop();
+      if (replacement) cards[index] = replacement;else cards.splice(index, 1);
+    }
+
+    function executeAction(state, action, who = state.turn) {
+      const check = validateAction(state, action, who);
+      if (!check.ok) return { ...check, events: [] };
+      const player = state.players[who];let event;
+      if (action.type === 'take') {
+        for (const color of action.colors) { state.bank[color]--;player.tokens[color]++; }
+        event = { type: 'take', colors: [...action.colors] };
+      } else if (action.type === 'buy') {
+        const card = findCard(state, action.cardId, who), req = price(card, player).req;
+        const spent = Object.fromEntries(ALL.map(color => [color, 0]));
+        for (const color of COLORS) { spent[color] = Math.min(req[color], player.tokens[color]);spent.y += req[color] - spent[color]; }
+        for (const color of ALL) { player.tokens[color] -= spent[color];state.bank[color] += spent[color]; }
+        if (player.reserved.some(value => value.id === card.id)) player.reserved = player.reserved.filter(value => value.id !== card.id);
+        else removeFace(state, card);
+        player.cards.push(card);player.bonuses[card.color]++;player.score += card.score;
+        event = { type: 'buy', card: clone(card), spent };
+      } else if (action.type === 'reserve' || action.type === 'blind_reserve') {
+        const card = action.type === 'reserve' ? findCard(state, action.cardId, who) : state.deck[action.tier].pop();
+        if (action.type === 'reserve') removeFace(state, card);else card.blindReserved = true;
+        player.reserved.push(card);
+        if (state.bank.y > 0) { state.bank.y--;player.tokens.y++; }
+        event = { type: action.type, ...(action.type === 'blind_reserve' ? { tier: action.tier } : {}), card: clone(card) };
+      } else if (action.type === 'discard') {
+        player.tokens[action.color]--;state.bank[action.color]++;
+        state.rulePhase = count(player) > 10 ? 'discard' : 'settle';
+        event = { type: 'discard', color: action.color };
+      } else {
+        const noble = state.nobles.find(value => value.id === action.id);
+        player.nobles.push(noble);player.score += 3;
+        state.nobles = state.nobles.filter(value => value.id !== noble.id);
+        state.rulePhase = 'complete';event = { type: 'noble', id: noble.id };
+      }
+      if (['take', 'buy', 'reserve', 'blind_reserve'].includes(action.type)) state.rulePhase = 'settle';
+      return { ok: true, events: [event] };
+    }
+
+    function prepareSettlement(state, who = state.turn) {
+      if (!validPlayer(state, who) || who !== state.turn || state.over) return { type: 'invalid' };
+      if (!['settle', 'discard', 'noble', 'complete'].includes(phase(state))) return { type: 'invalid' };
+      if (state.rulePhase === 'complete') return { type: 'complete' };
+      if (count(state.players[who]) > 10) {
+        state.rulePhase = 'discard';return { type: 'discard', need: count(state.players[who]) - 10 };
+      }
+      const nobles = eligible(state, who);
+      if (nobles.length) { state.rulePhase = 'noble';return { type: 'noble', options: nobles.map(noble => noble.id) }; }
+      state.rulePhase = 'complete';return { type: 'complete' };
+    }
+
+    function winnerSide(state) {
+      const [a, b] = state.players;
+      return a.score !== b.score ? (a.score > b.score ? 0 : 1)
+        : a.cards.length !== b.cards.length ? (a.cards.length < b.cards.length ? 0 : 1) : -1;
+    }
+
+    function advanceTurn(state, who = state.turn) {
+      if (!validPlayer(state, who) || who !== state.turn || state.over || state.rulePhase !== 'complete') return { ok: false };
+      if (who === 0) { if (state.players[0].score >= 15) state.endTrigger = true;state.turn = 1; }
+      else { state.turn = 0;state.round++;if (state.endTrigger || state.players[1].score >= 15) state.over = true; }
+      state.rulePhase = state.over ? 'over' : 'action';
+      return { ok: true, finished: !!state.over, winnerSide: state.over ? winnerSide(state) : null };
+    }
+
+    function copyState(state) {
+      // No setup, RNG, history, replay, animation, selection or browser objects.
+      const result = clone(Object.fromEntries(['bank', 'market', 'deck', 'players', 'nobles', 'turn', 'round', 'over', 'endTrigger'].map(key => [key, state[key]])));
+      result.rulePhase = phase(state);
+      return result;
+    }
+
+    function simulate(state, action, choices = {}) {
+      const next = copyState(state), who = next.turn, result = executeAction(next, action, who);
+      const events = [...result.events];let discardIndex = 0;
+      if (!result.ok) return { ...result, state: next };
+      while (true) {
+        const pending = prepareSettlement(next, who);
+        if (pending.type === 'complete') { const end = advanceTurn(next, who);return { ok: true, state: next, events, pending: null, ...end }; }
+        let follow;
+        if (pending.type === 'discard') {
+          const color = choices.discardColors?.[discardIndex++];
+          if (color === undefined) return { ok: true, state: next, events, pending };
+          follow = { type: 'discard', color };
+        } else if (pending.type === 'noble') {
+          const id = pending.options.length === 1 ? pending.options[0] : choices.nobleId;
+          if (id === undefined) return { ok: true, state: next, events, pending };
+          follow = { type: 'noble', id };
+        } else return { ok: false, reason: 'invalid_settlement', state: next, events };
+        const applied = executeAction(next, follow, who);
+        if (!applied.ok) return { ...applied, state: next, events };
+        events.push(...applied.events);
+      }
+    }
+
+    function observe(state, who) {
+      if (!validPlayer(state, who)) throw new Error('Invalid observer');
+      const card = value => ({ id: value.id, tier: value.tier, color: value.color, score: value.score,
+        cost: Object.fromEntries(COLORS.filter(color => value.cost[color]).map(color => [color, value.cost[color]])),
+        ...(value.blindReserved ? { blindReserved: true } : {}) });
+      const noble = value => ({ id: value.id, name: value.name,
+        req: Object.fromEntries(COLORS.filter(color => value.req[color]).map(color => [color, value.req[color]])) });
+      const tokens = value => Object.fromEntries(ALL.map(color => [color, value[color] || 0]));
+      return {
+        self: who, turn: state.turn, round: state.round, over: !!state.over, endTrigger: !!state.endTrigger,
+        bank: tokens(state.bank), market: Object.fromEntries([1, 2, 3].map(tier => [tier, state.market[tier].map(card)])),
+        drawPileCounts: Object.fromEntries([1, 2, 3].map(tier => [tier, state.deck[tier].length])),
+        nobles: state.nobles.map(noble),
+        players: state.players.map((player, side) => ({ score: player.score, tokens: tokens(player.tokens), bonuses: tokens(player.bonuses),
+          cards: player.cards.map(card), nobles: player.nobles.map(noble),
+          reserved: player.reserved.map(value => side !== who && value.blindReserved
+            ? { tier: value.tier, faceDown: true } : card(value)) })),
+      };
+    }
+
+    return Object.freeze({ price, canTake, sameCard, findCard, eligible, validateAction, legalActions,
+      executeAction, prepareSettlement, advanceTurn, winnerSide, copyState, simulate, observe });
+  }
+  return Object.freeze({ create });
+});
+</script>
+<!-- END GENERATED rules -->
+<!-- BEGIN GENERATED legacy-v1 -->
+<script>
+/* Frozen legacy-v1 policy: original function bodies, isolated observation-only context. */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.SplendorLegacyAI = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+  const COLORS=['w','u','g','r','k'],ALL=[...COLORS,'y'];
+  const clone=value=>JSON.parse(JSON.stringify(value));
+  const cnt=value=>Object.values(value||{}).reduce((a,b)=>a+b,0);
+  function context(observation, rng) {
+    // Reindex the observer as legacy slot 1. No actual deck, setup or replay enters here.
+    const S={market:clone(observation.market),bank:clone(observation.bank),nobles:clone(observation.nobles),
+      players:[null,clone(observation.players[observation.self])],botRng:rng>>>0,turn:1,over:false,modal:null};
+    let action=null;const returned=[];
+    const matchMode=()=> 'ai';
+    // Original discard logging expressions are evaluated but never shown here.
+    const playerLabel=()=>'';const C=Object.fromEntries(ALL.map(color=>[color,{name:''}]));
+    const pay=card=>{action={type:'buy',cardId:card.id};return true};
+    const take=colors=>{action={type:'take',colors:[...colors]};return true};
+    const reserve=card=>{action={type:'reserve',cardId:card.id};return true};
+    const afterAction=()=>{};const goNext=()=>{};
+    const putLog=(who,text,event)=>{if(event?.type==='discard')returned.push(event.color)};
+function bonusCards(player,c){return player.bonuses[c]||0}
+function price(card,p){let req={},short=0;for(const c of COLORS){req[c]=Math.max(0,(card.cost[c]||0)-bonusCards(p,c));short+=Math.max(0,req[c]-(p.tokens[c]||0));}return{req,short,left:Math.max(0,short-(p.tokens.y||0))}}
+function canBuy(card,p){return price(card,p).left===0}
+function canTake(pick,who){let p=S.players[who];const available=COLORS.filter(c=>S.bank[c]>0).length;if(available>0&&pick.length===Math.min(3,available)&&new Set(pick).size===pick.length)return pick.every(c=>COLORS.includes(c)&&S.bank[c]>0);if(pick.length===2&&pick[0]===pick[1])return S.bank[pick[0]]>=4;return false;}
+function owned(card,p){return p.reserved.some(a=>a.id===card.id)}
+function marketOf(id){for(let t=1;t<=3;t++){let a=S.market[t].find(a=>a.id===id);if(a)return a}return null}
+function getMarketCards(){return [3,2,1].flatMap(t=>S.market[t]);}
+function allOptions(p){return [...getMarketCards(),...p.reserved]}
+function weightedColor(c,p){let value=.85;const market=getMarketCards();for(const card of market.filter(x=>x.score>=2)){let d=price(card,p).req[c]||0;if(d>0)value+=Math.min(3,d)*.075;}for(const n of S.nobles){let deficit=(n.req[c]||0)-(p.bonuses[c]||0);if(deficit>0&&deficit<=2)value+=.18;}return value}
+function botRandom(){S.botRng=(Math.imul(1664525,S.botRng>>>0)+1013904223)>>>0;return S.botRng/4294967296;}
+function lookAhead(card,p){const pr=price(card,p),needed=pr.left,bonus=weightedColor(card.color,p);let nobleBoost=0;for(const n of S.nobles){const req=n.req[card.color]||0;if(req>0){const left=COLORS.reduce((a,c)=>a+Math.max(0,(n.req[c]||0)-(p.bonuses[c]||0)-(c===card.color?1:0)),0);nobleBoost=Math.max(nobleBoost,Math.max(0,1.4-left*.26))}}
+const distance=Math.ceil(needed/2.4);let benefit=card.score*(p.score>=8?2.15:1.55)+(p.cards.length<5?1.25:0.5)*bonus+nobleBoost+(card.tier===1&&p.cards.length<5?.3:0);let speed=1+distance*.57;let utility=benefit/speed;if(card.score===0&&p.cards.length>=8)utility*=.5;if(card.score>=3&&p.score>=8)utility+=2;if(card.score+p.score>=15&&needed<=3)utility+=10;if(p.cards.length<3){utility*=card.tier===1?1.85:card.tier===2?.7:.28}else if(p.cards.length<6){utility*=card.tier===1?1.06:card.tier===2?1.16:.6}else if(p.cards.length<9){utility*=card.tier===3?.85:1.0}return{card,utility,needed,pr}}
+function usefulTake(p){const candidates=[];
+for(let i=0;i<COLORS.length;i++)for(let j=i+1;j<COLORS.length;j++)for(let k=j+1;k<COLORS.length;k++){let cs=[COLORS[i],COLORS[j],COLORS[k]];if(canTake(cs,1))candidates.push(cs)}
+if(COLORS.filter(c=>S.bank[c]>0).length<3){const cs=COLORS.filter(c=>S.bank[c]>0);if(cs.length&&canTake(cs,1))candidates.push(cs)}
+for(const c of COLORS)if(S.bank[c]>=4)candidates.push([c,c]);
+const top=allOptions(p).map(x=>lookAhead(x,p)).sort((a,b)=>b.utility-a.utility).slice(0,7);
+let best=null,score=-Infinity;
+for(const cs of candidates){let v=0;for(const op of top){let gain=0;const needed=price(op.card,p).req;
+for(const c of cs){if(needed[c]>(p.tokens[c]||0)+cs.slice(0,cs.indexOf(c)).filter(x=>x===c).length)gain+=1}v+=Math.max(0,op.utility)*gain*.26;}
+let demand=COLORS.reduce((a,c)=>a+(p.tokens[c]||0),0);v+=cs.length*.17-(cnt(p.tokens)+cs.length>10?2:0);for(const c of cs){if(p.tokens[c]>=4)v-=.45;}v+=botRandom()*.18;
+if(v>score){score=v;best=cs}}
+return{best,score};}
+function autoDiscard(who){const p=S.players[who];while(cnt(p.tokens)>10){let priority=COLORS.map(c=>({c,v:p.tokens[c]/(1+weightedColor(c,p))})).filter(x=>p.tokens[x.c]>0).sort((a,b)=>b.v-a.v);let c=priority[0]?.c||'y';if(!p.tokens[c])c=ALL.find(x=>p.tokens[x]>0);p.tokens[c]--;S.bank[c]++;putLog(who,`${playerLabel(who)} 因超过10枚上限弃掉1枚${C[c].name}宝石`,{type:'discard',color:c})} }
+function botTurn(){if(matchMode()!=='ai'||S.over||S.turn!==1||S.modal)return;const p=S.players[1];let opts=allOptions(p).map(c=>lookAhead(c,p)).sort((a,b)=>b.utility-a.utility),buys=opts.filter(x=>x.needed===0);
+let takeopt=usefulTake(p);
+let bought=false;
+if(buys.length){let b=buys[0];const base=b.card.score*2.2+weightedColor(b.card.color,p)+(p.cards.length<4?1:0);if(b.card.score>0||p.cards.length<5||base>=3.0||cnt(p.tokens)>=8){pay(b.card,1);bought=true}}
+if(!bought){let takeChoice=takeopt.best;
+if(takeChoice&&cnt(p.tokens)>=9&&buys.length){pay(buys[0].card,1)}
+else if(takeChoice){take(takeChoice,1)}
+else if(buys.length){pay(buys[0].card,1)}
+else if(p.reserved.length<3&&S.bank.y>0){let c=opts.find(x=>marketOf(x.card.id)&&x.card.score>=2);if(c)reserve(c.card,1);else{let c2=getMarketCards()[0];if(c2)reserve(c2,1)}}
+else if(getMarketCards().length&&p.reserved.length<3)reserve(getMarketCards()[0],1)
+else {putLog('sys','AI 当前没有可执行行动。');goNext(1);return}}
+afterAction(1)}
+    return {decide(){botTurn();return {strategyId:'legacy-v1',action,nextRng:S.botRng}},
+      discard(){autoDiscard(1);return returned}};
+  }
+  return Object.freeze({strategyId:'legacy-v1',
+    decide:(observation,rng)=>context(observation,rng).decide(),
+    discardColors:observation=>context(observation,0).discard()});
+});
+</script>
+<!-- END GENERATED legacy-v1 -->
 <script>
 (()=>{'use strict';
 const COLORS=['w','u','g','r','k'],ALL=[...COLORS,'y'];
@@ -447,6 +744,7 @@ const CARD_POOL=CARD_ROWS.map(([tier,color,score,...counts],ix)=>({
 }));
 const NOBLES=NOBLE_ROWS.map(([name,...counts],i)=>({id:i+1,name,req:Object.fromEntries(['w','u','g','r','k'].map((c,j)=>[c,counts[j]]).filter(([,n])=>n>0))}));
 if(CARD_POOL.length!==90||NOBLES.length!==10||[1,2,3].some((t,i)=>CARD_POOL.filter(c=>c.tier===t).length!==[40,30,20][i]))throw new Error('经典版牌组数量校验失败');
+const Rules=SplendorRules.create(CARD_POOL),Legacy=SplendorLegacyAI;
 
 const $=x=>document.getElementById(x);const rand=n=>Math.floor(Math.random()*n);const clone=o=>JSON.parse(JSON.stringify(o));
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -518,6 +816,7 @@ function makeMatchSetupHTML(standalone=false,seed='shuffle'){
  return `<div class="match-setup"><h2>💎 ${standalone?'欢迎来到璀璨宝石':'开始新对局'}</h2><p>先选择对战模式并给玩家命名，然后开始。两种模式使用同一套经典规则。</p>
  <div class="match-modes"><label class="match-mode"><input type="radio" name="matchMode" value="ai" ${mode==='ai'?'checked':''}><span><b>👤 玩家 vs AI</b><small>挑战本地策略对手</small></span></label><label class="match-mode"><input type="radio" name="matchMode" value="pvp" ${mode==='pvp'?'checked':''}><span><b>👥 玩家 vs 玩家</b><small>同一台电脑交替操作</small></span></label></div>
  <div class="match-names"><label>玩家1名称<input id="matchName0" maxlength="18" value="${esc(a)}" placeholder="玩家1" autocomplete="off"></label><label><span id="matchOpponentLabel">${mode==='pvp'?'玩家2名称':'对手名称'}</span><input id="matchName1" maxlength="18" value="${esc(b)}" placeholder="${mode==='pvp'?'玩家2':'AI'}" autocomplete="off"></label></div>
+ <div class="match-startrow" id="matchDifficultyRow" ${mode==='pvp'?'hidden style="display:none"':''}><label for="matchDifficulty">AI 难度</label><select id="matchDifficulty"><option value="easy" selected>简单（原版 AI）</option><option value="normal" disabled>普通（尚未启用）</option><option value="hard" disabled>困难（尚未启用）</option></select></div>
  <div class="match-startrow"><label for="matchSeed">开局牌序</label><select id="matchSeed"><option value="shuffle" ${seed==='shuffle'?'selected':''}>🔀 重新洗牌</option>${S?.setup?`<option value="replay" ${seed==='replay'?'selected':''}>↺ 使用当前牌序 #${esc(S.setup.boardId)}</option>`:''}</select></div>
  <div class="note">双人模式中双方轮流操作，双方预留区会在下方同时显示；系统自动处理支付、永久折扣与回合结束。</div>
  <div class="replay-actions"><button class="btn primary" data-act="match-start">✓ 开始游戏</button>${!standalone?'<button class="btn ghost" data-act="match-cancel">取消</button>':''}</div>
@@ -528,16 +827,19 @@ function renderLanding(){
  wireMatchSetup();
  $('app').querySelector('[data-act="match-start"]').addEventListener('click',startConfiguredMatch);
 }
-function wireMatchSetup(){document.querySelectorAll('input[name="matchMode"]').forEach(r=>r.addEventListener('change',()=>{const pvp=document.querySelector('input[name="matchMode"]:checked')?.value==='pvp';$('matchOpponentLabel').textContent=pvp?'玩家2名称':'对手名称';const box=$('matchName1');if(!box.dataset.edited||['AI','玩家2'].includes(box.value)){box.value=pvp?'玩家2':'AI'} }));const input=$('matchName1');if(input)input.addEventListener('input',()=>input.dataset.edited='1');}
+function wireMatchSetup(){document.querySelectorAll('input[name="matchMode"]').forEach(r=>r.addEventListener('change',()=>{const pvp=document.querySelector('input[name="matchMode"]:checked')?.value==='pvp';$('matchOpponentLabel').textContent=pvp?'玩家2名称':'对手名称';const difficulty=$('matchDifficultyRow');if(difficulty){difficulty.hidden=pvp;difficulty.style.display=pvp?'none':'';}const box=$('matchName1');if(!box.dataset.edited||['AI','玩家2'].includes(box.value)){box.value=pvp?'玩家2':'AI'} }));const input=$('matchName1');if(input)input.addEventListener('input',()=>input.dataset.edited='1');}
 function openMatchSetup(seed='shuffle'){if(!S){renderLanding();return;}S.modal={type:'setup',seed};render()}
 function startConfiguredMatch(){
  const mode=document.querySelector('input[name="matchMode"]:checked')?.value==='pvp'?'pvp':'ai';
  const names=[($('matchName0')?.value||'').trim().slice(0,18)||'玩家1',($('matchName1')?.value||'').trim().slice(0,18)||(mode==='pvp'?'玩家2':'AI')];
+ const difficulty=mode==='ai'?$('matchDifficulty')?.value||'easy':'easy';if(difficulty!=='easy'){alert('普通和困难尚未启用，请选择简单难度。');return;}
  const seed=$('matchSeed')?.value==='replay'&&S?.setup?'replay':'shuffle';
  if(S&&!S.over&&!confirm(`开始新对局（${names[0]} vs ${names[1]}）？当前进行中的回合将重置，建议先导出复盘。`))return;
- newGame(seed,null,{mode,names});
+ newGame(seed,null,{mode,names,difficulty});
 }
 function newGame(mode='shuffle',importedSetup=null,matchConfig=null){
+ const difficulty=matchConfig?.difficulty||S?.aiDifficulty||'easy';if(difficulty!=='easy')throw new Error('该AI难度尚未启用');
+ clearTimeout(botTimer);botTimer=null;matchGeneration++;
  mobileSection='1';
  queuedFX.length=0;fxBusy=false;if(fxTimeout)clearTimeout(fxTimeout);document.body.classList.remove('fx-busy');document.querySelectorAll('.fx-flight').forEach(x=>x.remove());
  const setup=mode==='restore'?validateBoardSetup(importedSetup):mode==='replay'&&S?.setup?.version==='classic-2014-v1'?clone(S.setup):gameSetupRandom();
@@ -551,7 +853,7 @@ function newGame(mode='shuffle',importedSetup=null,matchConfig=null){
   if(deck[t].some(x=>!x||x.tier!==t)||deck[t].length!=={1:40,2:30,3:20}[t])throw new Error('卡牌顺序错误');
   market[t]=Array.from({length:4},()=>deck[t].pop());
  }
- drawerFilter='all';S={rulesVersion:'classic-2014-v1',matchMode:gameMode,playerNames:[...gameNames],setup,botRng:setup.botSeed,bank:Object.fromEntries([...COLORS.map(c=>[c,4]),['y',5]]),market,deck,
+ drawerFilter='all';S={rulesVersion:'classic-2014-v1',aiDifficulty:difficulty,aiVersion:'legacy-v1',rulePhase:'action',matchMode:gameMode,playerNames:[...gameNames],setup,botRng:setup.botSeed,bank:Object.fromEntries([...COLORS.map(c=>[c,4]),['y',5]]),market,deck,
   nobles:setup.nobleIds.map(id=>clone(NOBLES.find(n=>n.id===id))),players:[mkPlayer(),mkPlayer()],turn:0,round:1,over:false,endTrigger:false,
   history:[{who:'sys',text:mode==='restore'?'已从牌序备份恢复完整牌堆与贵族。':mode==='replay'?'原牌序重玩：三级牌堆和贵族与上一局完全相同。':'经典牌组已洗牌：90张卡牌、10位贵族中随机选3位。'}],
   selected:null,tokenMode:'diff',tokenSel:[],coach:false,modal:null,
@@ -563,6 +865,7 @@ function newGame(mode='shuffle',importedSetup=null,matchConfig=null){
 function botRandom(){S.botRng=(Math.imul(1664525,S.botRng>>>0)+1013904223)>>>0;return S.botRng/4294967296;}
 function mkPlayer(){return{score:0,tokens:arr5(),bonuses:arr5(),cards:[],reserved:[],nobles:[]}}
 let S;
+let botTimer=null,matchGeneration=0;
 let sideTab='review';
 let drawerOpen=false,drawerFilter='all',drawerLastCount=-1,drawerScrollCache=0;
 let animationOn=true;try{animationOn=localStorage.getItem('splendor_plus_animation')!=='off'}catch(e){}
@@ -686,9 +989,9 @@ function exportReplay(){
 }
 function save(){try{localStorage.setItem('splendor_classic_v4',JSON.stringify(S))}catch(e){}}
 function bonusCards(player,c){return player.bonuses[c]||0}
-function price(card,p){let req={},short=0;for(const c of COLORS){req[c]=Math.max(0,(card.cost[c]||0)-bonusCards(p,c));short+=Math.max(0,req[c]-(p.tokens[c]||0));}return{req,short,left:Math.max(0,short-(p.tokens.y||0))}}
+function price(card,p){return Rules.price(card,p)}
 function canBuy(card,p){return price(card,p).left===0}
-function canTake(pick,who){let p=S.players[who];const available=COLORS.filter(c=>S.bank[c]>0).length;if(available>0&&pick.length===Math.min(3,available)&&new Set(pick).size===pick.length)return pick.every(c=>COLORS.includes(c)&&S.bank[c]>0);if(pick.length===2&&pick[0]===pick[1])return S.bank[pick[0]]>=4;return false;}
+function canTake(pick,who){return Number.isInteger(who)&&!!S.players[who]&&Rules.canTake(S,pick)}
 function owned(card,p){return p.reserved.some(a=>a.id===card.id)}
 function marketOf(id){for(let t=1;t<=3;t++){let a=S.market[t].find(a=>a.id===id);if(a)return a}return null}
 function findCard(id,who=0){return marketOf(id)||S.players[who].reserved.find(a=>a.id===id)||null}
@@ -703,37 +1006,69 @@ function putLog(who,text,action){
   text,action:action||{type:'system'},reason:note,publicBoardAfter:publicSnapshot()});
  if(note)S.turnNote='';
 }
-function removeFace(card){const t=card.tier;const i=S.market[t].findIndex(a=>a.id===card.id);if(i<0)return;const more=S.deck[t].pop();if(more){S.market[t][i]=more;}else S.market[t].splice(i,1)}
 function weightedColor(c,p){let value=.85;const market=getMarketCards();for(const card of market.filter(x=>x.score>=2)){let d=price(card,p).req[c]||0;if(d>0)value+=Math.min(3,d)*.075;}for(const n of S.nobles){let deficit=(n.req[c]||0)-(p.bonuses[c]||0);if(deficit>0&&deficit<=2)value+=.18;}return value}
-function pay(card,who){const p=S.players[who],check=price(card,p);if(check.left>0)return false;let spent=arr5(),goldUsed=0;for(const c of COLORS){const need=check.req[c];spent[c]=Math.min(need,p.tokens[c]);goldUsed+=need-spent[c]}
-spent.y=goldUsed;for(const c of ALL){p.tokens[c]-=spent[c];S.bank[c]+=spent[c]}if(owned(card,p)){p.reserved=p.reserved.filter(x=>x.id!==card.id)}else removeFace(card);p.cards.push(card);p.bonuses[card.color]++;p.score+=card.score;
-putLog(who,`${playerLabel(who)} 购买了 ${card.id}（+${C[card.color].name}折扣，${card.score}分）`,{type:'buy',card:clone(card),spent});return true}
-function take(gems,who){const p=S.players[who];if(!canTake(gems,who))return false;for(const c of gems){S.bank[c]--;p.tokens[c]++}putLog(who,`${playerLabel(who)} 拿取了 ${gems.map(c=>C[c].name).join('、')} 宝石`,{type:'take',colors:[...gems]});return true}
-function reserve(card,who){let p=S.players[who];if(p.reserved.length>=3||!marketOf(card.id))return false;removeFace(card);p.reserved.push(card);if(S.bank.y>0){S.bank.y--;p.tokens.y++}putLog(who,`${playerLabel(who)} 预留了 ${card.id}`,{type:'reserve',card:clone(card)});return true;}
-function blindReserve(t,who){let p=S.players[who];if(p.reserved.length>=3||!S.deck[t].length)return false;const card=S.deck[t].pop();card.blindReserved=true;p.reserved.push(card);if(S.bank.y>0){S.bank.y--;p.tokens.y++}putLog(who,`${playerLabel(who)} 盲抽预留了 ${t} 级卡牌`,{type:'blind_reserve',tier:t,card:matchMode()==='ai'&&who===0?clone(card):{tier:t,faceDown:true}});return true;}
-function eligible(who){let p=S.players[who];return S.nobles.filter(n=>COLORS.every(c=>(p.bonuses[c]||0)>=(n.req[c]||0)))}
-function gainNoble(who,id){const n=S.nobles.find(x=>x.id===id),p=S.players[who];if(!n||!eligible(who).some(x=>x.id===id))return false;p.nobles.push(n);p.score+=3;S.nobles=S.nobles.filter(x=>x.id!==id);putLog(who,`${playerLabel(who)} 获得贵族 N-${id}（+3分）`,{type:'noble',id});return true}
-function autoDiscard(who){const p=S.players[who];while(cnt(p.tokens)>10){let priority=COLORS.map(c=>({c,v:p.tokens[c]/(1+weightedColor(c,p))})).filter(x=>p.tokens[x.c]>0).sort((a,b)=>b.v-a.v);let c=priority[0]?.c||'y';if(!p.tokens[c])c=ALL.find(x=>p.tokens[x]>0);p.tokens[c]--;S.bank[c]++;putLog(who,`${playerLabel(who)} 因超过10枚上限弃掉1枚${C[c].name}宝石`,{type:'discard',color:c})} }
-function gameOver(){let a=S.players[0],b=S.players[1],winnerSide=a.score!==b.score?(a.score>b.score?0:1):a.cards.length!==b.cards.length?(a.cards.length<b.cards.length?0:1):-1;
- const winner=winnerSide<0?'平局':playerLabel(winnerSide);S.over=true;S.modal={type:'end',winner,winnerSide};putLog('sys',`对局结束：${playerLabel(0)} ${a.score} 分，${playerLabel(1)} ${b.score} 分。胜者：${winner}`,{type:'end',winner});save();render();}
-function goNext(who){S.selected=null;S.tokenSel=[];S.modal=null;S.turnNote='';
- if(who===0){if(S.players[0].score>=15)S.endTrigger=true;S.turn=1;S.notice=matchMode()==='pvp'?`轮到 ${playerLabel(1)} 操作。`:'AI 思考中…';save();render();
-  if(matchMode()==='ai')setTimeout(()=>{if(matchMode()==='ai')botTurn()},animationOn&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches?FX_TIMING.aiPause:520);
- }else{S.turn=0;S.round++;
-  if(S.endTrigger||S.players[1].score>=15){gameOver();return}
-  S.notice=`轮到 ${playerLabel(0)} 操作。`;save();render();}}
-function afterAction(who){const p=S.players[who];if(cnt(p.tokens)>10){if(isHumanTurn()){S.modal={type:'discard',need:cnt(p.tokens)-10};save();render();return}else autoDiscard(who)}const ns=eligible(who);if(ns.length){if(isHumanTurn()&&ns.length>1){S.modal={type:'noble',options:ns.map(x=>x.id)};save();render();return}else gainNoble(who,ns[0].id)}goNext(who);}
-function playerBuy(){if(!isHumanTurn()||S.over||S.modal)return;const who=S.turn,card=findCard(S.selected,who);if(!card){S.notice='先选择一张发展卡。';render();return}if(!canBuy(card,S.players[who])){S.notice='宝石不足，无法购买这张牌，请重新检查资源。';render();return}pay(card,who);S.notice=`${playerLabel(who)} 成功购买 ${card.id}，永久获得1个${C[card.color].name}色折扣。`;afterAction(who)}
-function playerReserve(){if(!isHumanTurn()||S.over||S.modal)return;const who=S.turn,card=marketOf(S.selected);if(!card||S.players[who].reserved.length>=3)return;reserve(card,who);S.notice=`${playerLabel(who)} 已预留 ${card.id}。`;afterAction(who)}
+function applyRuleAction(action,who,automaticDiscard=false){
+ const result=Rules.executeAction(S,action,who);if(!result.ok)return false;
+ for(const event of result.events){
+  let text,record=event;
+  if(event.type==='buy')text=`${playerLabel(who)} 购买了 ${event.card.id}（+${C[event.card.color].name}折扣，${event.card.score}分）`;
+  else if(event.type==='take')text=`${playerLabel(who)} 拿取了 ${event.colors.map(c=>C[c].name).join('、')} 宝石`;
+  else if(event.type==='reserve')text=`${playerLabel(who)} 预留了 ${event.card.id}`;
+  else if(event.type==='blind_reserve'){text=`${playerLabel(who)} 盲抽预留了 ${event.tier} 级卡牌`;record={type:event.type,tier:event.tier,card:matchMode()==='ai'&&who===0?event.card:{tier:event.tier,faceDown:true}};}
+  else if(event.type==='discard')text=automaticDiscard?`${playerLabel(who)} 因超过10枚上限弃掉1枚${C[event.color].name}宝石`:`${playerLabel(who)} 归还了1枚${C[event.color].name}宝石（10枚上限）`;
+  else text=`${playerLabel(who)} 获得贵族 N-${event.id}（+3分）`;
+  putLog(who,text,record);
+ }
+ return true;
+}
+function validCardArgument(card,who){const current=card&&Rules.findCard(S,card.id,who);return Rules.sameCard(card,current)}
+function pay(card,who){return validCardArgument(card,who)&&applyRuleAction({type:'buy',cardId:card.id},who)}
+function take(gems,who){return applyRuleAction({type:'take',colors:gems},who)}
+function reserve(card,who){return validCardArgument(card,who)&&applyRuleAction({type:'reserve',cardId:card.id},who)}
+function blindReserve(t,who){return applyRuleAction({type:'blind_reserve',tier:t},who)}
+function eligible(who){return Rules.eligible(S,who)}
+function gainNoble(who,id){return applyRuleAction({type:'noble',id},who)}
+function autoDiscard(who){
+ if(cnt(S.players[who].tokens)<=10)return;
+ if(Rules.prepareSettlement(S,who).type!=='discard')return;
+ for(const color of Legacy.discardColors(Rules.observe(S,who))){if(!applyRuleAction({type:'discard',color},who,true))throw new Error('AI归还筹码校验失败')}
+}
+function gameOver(){const winnerSide=Rules.winnerSide(S),winner=winnerSide<0?'平局':playerLabel(winnerSide);
+ S.over=true;S.rulePhase='over';S.modal={type:'end',winner,winnerSide};putLog('sys',`对局结束：${playerLabel(0)} ${S.players[0].score} 分，${playerLabel(1)} ${S.players[1].score} 分。胜者：${winner}`,{type:'end',winner});save();render();}
+function goNext(who){
+ const result=Rules.advanceTurn(S,who);if(!result.ok)return;
+ S.selected=null;S.tokenSel=[];S.modal=null;S.turnNote='';
+ if(result.finished){gameOver();return}
+ S.notice=S.turn===1&&matchMode()==='ai'?'AI 思考中…':`轮到 ${playerLabel(S.turn)} 操作。`;save();render();
+ if(S.turn===1&&matchMode()==='ai')scheduleBot();
+}
+function afterAction(who){
+ let pending=Rules.prepareSettlement(S,who);
+ if(pending.type==='discard'){
+  if(isHumanTurn()){S.modal=pending;save();render();return}
+  autoDiscard(who);pending=Rules.prepareSettlement(S,who);
+ }
+ if(pending.type==='noble'){
+  if(isHumanTurn()&&pending.options.length>1){S.modal=pending;save();render();return}
+  if(!gainNoble(who,pending.options[0]))return;
+ }
+ if(pending.type!=='invalid')goNext(who);
+}
+function playerBuy(){if(!isHumanTurn()||S.over||S.modal)return;const who=S.turn,card=findCard(S.selected,who);if(!card){S.notice='先选择一张发展卡。';render();return}if(!canBuy(card,S.players[who])){S.notice='宝石不足，无法购买这张牌，请重新检查资源。';render();return}if(!pay(card,who))return;S.notice=`${playerLabel(who)} 成功购买 ${card.id}，永久获得1个${C[card.color].name}色折扣。`;afterAction(who)}
+function playerReserve(){if(!isHumanTurn()||S.over||S.modal)return;const who=S.turn,card=marketOf(S.selected);if(!card||S.players[who].reserved.length>=3)return;if(!reserve(card,who))return;S.notice=`${playerLabel(who)} 已预留 ${card.id}。`;afterAction(who)}
 function playerBlind(t){if(!isHumanTurn()||S.over||S.modal||S.players[S.turn].reserved.length>=3)return;const who=S.turn;if(blindReserve(t,who))afterAction(who)}
 function playerTake(){if(!isHumanTurn()||S.over||S.modal)return;const who=S.turn;let gems=S.tokenMode==='double'?[S.tokenSel[0],S.tokenSel[0]]:S.tokenSel.slice();if(!canTake(gems,who)){S.notice='取宝石不符合规则：3种不同颜色各1，或者银行至少有4枚时取同色2枚。';render();return}
- take(gems,who);S.notice=`${playerLabel(who)} 已拿 ${gems.map(c=>C[c].name).join('、')}。`;afterAction(who)}
+ if(!take(gems,who))return;S.notice=`${playerLabel(who)} 已拿 ${gems.map(c=>C[c].name).join('、')}。`;afterAction(who)}
 function selectGem(c){if(S.over||!isHumanTurn()||S.modal||!COLORS.includes(c)||S.bank[c]<=0)return;if(S.tokenMode==='double'){if(S.bank[c]<4)return;S.tokenSel=[c]}else{if(S.tokenSel.includes(c))S.tokenSel=S.tokenSel.filter(x=>x!==c);else if(S.tokenSel.length<3)S.tokenSel.push(c)}S.notice='筹码已选好，点击「确认拿取」执行本回合行动。';save();render();}
 function selectCard(id){if(S.over||!isHumanTurn()||S.modal)return;S.selected=id;S.tokenSel=[];save();render()}
 function setTokenMode(v){if(!isHumanTurn()||S.over||S.modal)return;S.tokenMode=v;S.tokenSel=[];save();render()}
-function endModalChoice(id){if(!S.modal||S.modal.type!=='noble')return;const who=S.turn;gainNoble(who,id);S.modal=null;goNext(who)}
-function discardOne(c){const who=S.turn;if(!S.modal||S.modal.type!=='discard'||S.players[who].tokens[c]<=0)return;S.players[who].tokens[c]--;S.bank[c]++;S.modal.need--;putLog(who,`${playerLabel(who)} 归还了1枚${C[c].name}宝石（10枚上限）`,{type:'discard',color:c});
-if(S.modal.need<=0){S.modal=null;const ns=eligible(who);if(ns.length){if(ns.length>1){S.modal={type:'noble',options:ns.map(n=>n.id)};save();render();return}gainNoble(who,ns[0].id)}goNext(who)}else{save();render()}}
+function endModalChoice(id){if(!S.modal||S.modal.type!=='noble')return;const who=S.turn;if(!gainNoble(who,id))return;S.modal=null;goNext(who)}
+function discardOne(c){
+ if(!S.modal||S.modal.type!=='discard')return;const who=S.turn;
+ if(!applyRuleAction({type:'discard',color:c},who))return;
+ S.modal.need=cnt(S.players[who].tokens)-10;
+ if(S.modal.need<=0){S.modal=null;afterAction(who)}else{save();render()}
+}
 function lookAhead(card,p){const pr=price(card,p),needed=pr.left,bonus=weightedColor(card.color,p);let nobleBoost=0;for(const n of S.nobles){const req=n.req[card.color]||0;if(req>0){const left=COLORS.reduce((a,c)=>a+Math.max(0,(n.req[c]||0)-(p.bonuses[c]||0)-(c===card.color?1:0)),0);nobleBoost=Math.max(nobleBoost,Math.max(0,1.4-left*.26))}}
 const distance=Math.ceil(needed/2.4);let benefit=card.score*(p.score>=8?2.15:1.55)+(p.cards.length<5?1.25:0.5)*bonus+nobleBoost+(card.tier===1&&p.cards.length<5?.3:0);let speed=1+distance*.57;let utility=benefit/speed;if(card.score===0&&p.cards.length>=8)utility*=.5;if(card.score>=3&&p.score>=8)utility+=2;if(card.score+p.score>=15&&needed<=3)utility+=10;if(p.cards.length<3){utility*=card.tier===1?1.85:card.tier===2?.7:.28}else if(p.cards.length<6){utility*=card.tier===1?1.06:card.tier===2?1.16:.6}else if(p.cards.length<9){utility*=card.tier===3?.85:1.0}return{card,utility,needed,pr}}
 function pickTarget(p){const candidates=allOptions(p).map(c=>lookAhead(c,p)).sort((a,b)=>b.utility-a.utility);return candidates[0]}
@@ -749,18 +1084,25 @@ for(const c of cs){if(needed[c]>(p.tokens[c]||0)+cs.slice(0,cs.indexOf(c)).filte
 let demand=COLORS.reduce((a,c)=>a+(p.tokens[c]||0),0);v+=cs.length*.17-(cnt(p.tokens)+cs.length>10?2:0);for(const c of cs){if(p.tokens[c]>=4)v-=.45;}v+=botRandom()*.18;
 if(v>score){score=v;best=cs}}
 return{best,score};}
-function botTurn(){if(matchMode()!=='ai'||S.over||S.turn!==1||S.modal)return;const p=S.players[1];let opts=allOptions(p).map(c=>lookAhead(c,p)).sort((a,b)=>b.utility-a.utility),buys=opts.filter(x=>x.needed===0);
-let takeopt=usefulTake(p);
-let bought=false;
-if(buys.length){let b=buys[0];const base=b.card.score*2.2+weightedColor(b.card.color,p)+(p.cards.length<4?1:0);if(b.card.score>0||p.cards.length<5||base>=3.0||cnt(p.tokens)>=8){pay(b.card,1);bought=true}}
-if(!bought){let takeChoice=takeopt.best;
-if(takeChoice&&cnt(p.tokens)>=9&&buys.length){pay(buys[0].card,1)}
-else if(takeChoice){take(takeChoice,1)}
-else if(buys.length){pay(buys[0].card,1)}
-else if(p.reserved.length<3&&S.bank.y>0){let c=opts.find(x=>marketOf(x.card.id)&&x.card.score>=2);if(c)reserve(c.card,1);else{let c2=getMarketCards()[0];if(c2)reserve(c2,1)}}
-else if(getMarketCards().length&&p.reserved.length<3)reserve(getMarketCards()[0],1)
-else {putLog('sys','AI 当前没有可执行行动。');goNext(1);return}}
-afterAction(1)}
+function scheduleBot(delay=animationOn&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches?FX_TIMING.aiPause:520){
+ clearTimeout(botTimer);botTimer=null;
+ if(!S||matchMode()!=='ai'||S.over||S.turn!==1||S.modal)return;
+ const game=S,generation=matchGeneration;
+ botTimer=setTimeout(()=>{if(S!==game||generation!==matchGeneration)return;botTimer=null;botTurn()},delay);
+}
+function botTurn(){
+ if(matchMode()!=='ai'||S.over||S.turn!==1||S.modal||(S.rulePhase&&S.rulePhase!=='action'))return;
+ if(S.aiDifficulty&&S.aiDifficulty!=='easy')throw new Error('该AI难度尚未启用');
+ const decision=Legacy.decide(Rules.observe(S,1),S.botRng);
+ if(!decision.action){
+  // Preserve the original no-candidate fallback; pass is not a core legal action.
+  S.botRng=decision.nextRng;putLog('sys','AI 当前没有可执行行动。');S.rulePhase='complete';goNext(1);return;
+ }
+ if(!Rules.validateAction(S,decision.action,1).ok)throw new Error('legacy-v1行动与核心规则冲突');
+ S.botRng=decision.nextRng;
+ if(!applyRuleAction(decision.action,1))throw new Error('legacy-v1行动执行失败');
+ afterAction(1);
+}
 const costHTML=(card,p)=>COLORS.filter(c=>card.cost[c]).map(c=>{let n=card.cost[c];return `<span class="cost" title="原始费用：${C[c].name}${n}">${gem(c)}${n}</span>`}).join('');
 const bonusRow=(p,who)=>COLORS.map(c=>`<span class="bmini" data-bonus-gem="${who}-${c}">${gem(c)}<b>${p.bonuses[c]}</b></span>`).join('');
 const tokenRow=(p,who)=>ALL.map(c=>p.tokens[c]?`<span class="bmini" data-player-gem="${who}-${c}">${gem(c)}<b>${p.tokens[c]}</b></span>`:'').join('')||'<span class="sub">暂无筹码</span>';
@@ -907,17 +1249,17 @@ if(d.act==='history'){openDrawer(!drawerOpen);return}
 if(d.act==='mobile-tools'){mobileToolsOpen=!mobileToolsOpen;render();return}
 if(d.act==='fx'){animationOn=!animationOn;try{localStorage.setItem('splendor_plus_animation',animationOn?'on':'off')}catch(e){}if(!animationOn){queuedFX=[];fxBusy=false;clearTimeout(fxTimeout);document.body.classList.remove('fx-busy');document.querySelectorAll('.fx-flight').forEach(x=>x.remove())}render();return}
 if(d.act==='seed'){S.modal={type:'seed'};render()}
-else if(d.act==='seed-cancel'){S.modal=null;render()}
+else if(d.act==='seed-cancel'){S.modal=null;render();scheduleBot()}
 else if(d.act==='seed-export'){downloadBoardSetup()}
 else if(d.act==='seed-import'){$('seedFile')?.click()}
 else if(d.act==='match-start'){startConfiguredMatch();return}
-else if(d.act==='match-cancel'){S.modal=null;render();return}
+else if(d.act==='match-cancel'){S.modal=null;render();scheduleBot();return}
 else if(d.act==='seed-restore'){
  const record=getBoardHistory().find(x=>x.setup.boardId===d.id);
  if(!record){alert('未找到对应牌序');return}
  try{const setup=validateBoardSetup(record.setup);if(confirm(`恢复牌序 #${setup.boardId} 并从第1回合开始？当前对局进度会重置。`))newGame('restore',setup)}catch(e){alert('恢复失败：'+e.message)}
 }
-else if(d.act==='tab'){sideTab=d.value;render()}else if(d.act==='view'){compactView=!compactView;document.body.classList.toggle('view-large',!compactView);try{localStorage.setItem('splendor_plus_view',compactView?'compact':'large')}catch(e){}render()}else if(d.act==='export'){exportReplay()}else if(d.act==='new'){openMatchSetup('shuffle')}else if(d.act==='restart-cancel'){S.modal=null;render()}else if(d.act==='restart-replay'){openMatchSetup('replay')}else if(d.act==='restart-shuffle'){openMatchSetup('shuffle')}
+else if(d.act==='tab'){sideTab=d.value;render()}else if(d.act==='view'){compactView=!compactView;document.body.classList.toggle('view-large',!compactView);try{localStorage.setItem('splendor_plus_view',compactView?'compact':'large')}catch(e){}render()}else if(d.act==='export'){exportReplay()}else if(d.act==='new'){openMatchSetup('shuffle')}else if(d.act==='restart-cancel'){S.modal=null;render();scheduleBot()}else if(d.act==='restart-replay'){openMatchSetup('replay')}else if(d.act==='restart-shuffle'){openMatchSetup('shuffle')}
 else if(d.act==='help'){alert('经典版双人规则：\n\n每回合选择一项：\n1. 拿3种不同颜色各1枚，或在银行至少剩4枚时拿同色2枚；\n2. 买1张公开牌或自己的预留牌；\n3. 预留1张公开牌或盲抽牌（预留上限3），若银行还有金色万能币则同时拿1枚。\n\n每张购买的牌给你永久的颜色成本减免；贵族条件看永久卡数。每回合结束筹码最多10枚；满足多个贵族时只能领1位。先达到15分触发终局，双方完成相同轮数。平分时买卡较少者获胜。\n\n牌面数值按经典版2014的90张发展卡与10位贵族配置（未使用原版美术图像）。可随机洗牌或按同一牌序重玩。')}
 else if(d.act==='coach'){S.coach=!S.coach;if(!S.coach&&sideTab==='coach')sideTab='review';if(S.coach)sideTab='coach';render()}
 else if(d.act==='gem'){selectGem(d.color)}
@@ -929,7 +1271,7 @@ else if(d.act==='reserve'){playerReserve()}
 else if(d.act==='blind'){playerBlind(Number(d.tier))}
 else if(d.act==='discard'){discardOne(d.color)}
 else if(d.act==='noble'){endModalChoice(Number(d.id))}}
-try{const saved=JSON.parse(localStorage.getItem('splendor_classic_v4')||'null');if(saved&&saved.rulesVersion==='classic-2014-v1'&&saved.setup?.version==='classic-2014-v1'&&saved.players?.length===2&&saved.market&&saved.bank){S=saved;if(!Array.isArray(S.replay))S.replay=[{index:0,round:S.round,actor:'system',text:'从旧版存档升级；此前的详细行动不可追溯',action:{type:'migrated'},reason:'',publicBoardAfter:publicSnapshot()}];if(!('turnNote'in S))S.turnNote='';if(!S.matchMode)S.matchMode='ai';if(!Array.isArray(S.playerNames)||S.playerNames.length!==2)S.playerNames=['你','AI'];S.coach=false;}}catch(e){}
+try{const saved=JSON.parse(localStorage.getItem('splendor_classic_v4')||'null');if(saved&&saved.rulesVersion==='classic-2014-v1'&&saved.setup?.version==='classic-2014-v1'&&saved.players?.length===2&&saved.market&&saved.bank){S=saved;if(!Array.isArray(S.replay))S.replay=[{index:0,round:S.round,actor:'system',text:'从旧版存档升级；此前的详细行动不可追溯',action:{type:'migrated'},reason:'',publicBoardAfter:publicSnapshot()}];if(!('turnNote'in S))S.turnNote='';if(!S.matchMode)S.matchMode='ai';if(!Array.isArray(S.playerNames)||S.playerNames.length!==2)S.playerNames=['你','AI'];S.coach=false;const unsupported=S.aiDifficulty&&S.aiDifficulty!=='easy';S.aiDifficulty='easy';S.aiVersion='legacy-v1';S.rulePhase=S.over?'over':S.modal?.type==='discard'?'discard':S.modal?.type==='noble'?'noble':S.rulePhase||'action';if(unsupported&&matchMode()==='ai')S.notice='原存档的AI难度尚未启用，本局继续使用简单（legacy-v1）。';}}catch(e){}
 window.addEventListener('resize',fitDrawerHeight);
 document.addEventListener('click',e=>{
  const button=e.target.closest('button[data-drawer]');if(!button)return;
@@ -937,7 +1279,7 @@ document.addEventListener('click',e=>{
  else if(button.dataset.drawer==='filter'){drawerFilter=button.dataset.value;renderDrawer();document.getElementById('logEntries').scrollTop=0}
 });
 if(!S)renderLanding();else{rememberSetup(S.setup);render();}
-if(S&&S.turn===1&&matchMode()==='ai'&&!S.over&&!S.modal)setTimeout(botTurn,540);
+if(S&&S.turn===1&&matchMode()==='ai'&&!S.over&&!S.modal)scheduleBot(540);
 })();
 </script>
 </body>
