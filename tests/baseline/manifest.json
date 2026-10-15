@@ -1,0 +1,37 @@
+{
+  "strategyId": "legacy-v1",
+  "sourceCommit": "34468c5",
+  "sourceFile": "legacy-v1.html",
+  "sourceSha256": "8c20c1c2a5f6fe750c65e08e9767e04c18057b4e125cbdb2501797ad4b85bc9c",
+  "decisionCaseCount": 155,
+  "fixtureHashes": {
+    "board-export-v1.json": "d1f9d442ebc0bf603fbd9a5df5c077e9ab496586c9390e32934fcbd6cfe9331c",
+    "board-seed-v1.json": "ce4b1ff18999a9e6a21e7e5c7b89267529973cba278f6c102bdcb13ba456a900",
+    "classic-data-v1.json": "d826224d8d0904805b7c877f118e63794766773db38e3b6368cea7d3134ee2d1",
+    "legacy-decisions-v1.json": "59f1b428731a6c15bac8a97902758793a2bca8163318dd4692539ec43e232688",
+    "replay-review-v2.json": "b955420921adf5cb08c5b3175248a0936fa058e651cd74cee4e7387377205b09",
+    "save-ai-initial.json": "6b1d01014b60a1a27c3e53e03f0d66543a156c5402c2d52d03786ea8f5857c3e",
+    "save-ai-midgame.json": "d76bf886c1bacca9ed69873742f14259079c51eb95ee9045aa7a6d54bd12c5ca",
+    "save-ai-pending.json": "ad08fed0b1772b6573c2e2bbe232f7117a83e8e1afa4b5dfaf4a83f0dd475d77",
+    "save-ai-pre-replay.json": "0a82d0684926f4f37944b562a0677c5fe4e659dd44e3ba69616ce56d128b64fe",
+    "save-pvp-discard.json": "d89e9bcb41d2f168795dd2851519cb618b7315117a4177b245effe28e2dd32b1",
+    "save-pvp-ended.json": "b70fa68da049e438f0200be354de97ff44754ec2291868b486243eb30655bad8",
+    "save-pvp-final-response.json": "7a2a112cf5d0f12e853a833ca561d5ba64e10bdc0e71f6f0892e7873c58cdfed",
+    "save-pvp-midgame.json": "c06b46ab685fe59fd4108fcd7a17c7909ed7bdc40c56ed3f6b4a347ae866e6ef",
+    "save-pvp-noble.json": "7ad079fe365187613cb987453313b0bcaa782045ef275b60c0753a1cd9664fb6"
+  },
+  "knownDefects": [
+    {
+      "id": "gold-double-take",
+      "description": "canTake accepts [y,y]; P0 characterizes it, P1 must reject it."
+    },
+    {
+      "id": "blind-reserve-replay-secret",
+      "description": "AI-mode human blind-reserve action includes its private card."
+    },
+    {
+      "id": "legacy-double-demand",
+      "description": "usefulTake counts repeated colors with indexOf; frozen for simple AI compatibility."
+    }
+  ]
+}

@@ -1,0 +1,1015 @@
+{
+  "format": "splendor-coach-review-v2",
+  "boardId": "1C327E6D",
+  "matchMode": "ai",
+  "playerNames": [
+    "玩家1",
+    "AI"
+  ],
+  "description": "经典版2014牌组，90张发展卡、10位贵族；仅记录当时公开的信息，不导出隐藏牌堆顺序",
+  "exportedAt": "2026-10-14T00:00:00.000Z",
+  "result": {
+    "finished": false,
+    "round": 2,
+    "humanScore": 0,
+    "botScore": 0,
+    "humanCardCount": 0,
+    "botCardCount": 0,
+    "winner": null
+  },
+  "currentPublicBoard": {
+    "round": 2,
+    "activePlayer": "human",
+    "gameOver": false,
+    "scores": [
+      0,
+      0
+    ],
+    "bank": {
+      "w": 3,
+      "u": 3,
+      "g": 2,
+      "r": 3,
+      "k": 3,
+      "y": 5
+    },
+    "market": {
+      "1": [
+        {
+          "id": "1-37",
+          "tier": 1,
+          "color": "r",
+          "score": 0,
+          "cost": {
+            "g": 2,
+            "r": 1
+          }
+        },
+        {
+          "id": "1-05",
+          "tier": 1,
+          "color": "k",
+          "score": 0,
+          "cost": {
+            "g": 2,
+            "r": 1
+          }
+        },
+        {
+          "id": "1-26",
+          "tier": 1,
+          "color": "g",
+          "score": 0,
+          "cost": {
+            "w": 1,
+            "u": 1,
+            "r": 1,
+            "k": 2
+          }
+        },
+        {
+          "id": "1-25",
+          "tier": 1,
+          "color": "g",
+          "score": 0,
+          "cost": {
+            "w": 1,
+            "u": 1,
+            "r": 1,
+            "k": 1
+          }
+        }
+      ],
+      "2": [
+        {
+          "id": "2-27",
+          "tier": 2,
+          "color": "r",
+          "score": 2,
+          "cost": {
+            "w": 1,
+            "r": 4,
+            "k": 2
+          }
+        },
+        {
+          "id": "2-21",
+          "tier": 2,
+          "color": "g",
+          "score": 2,
+          "cost": {
+            "u": 2,
+            "k": 4
+          }
+        },
+        {
+          "id": "2-08",
+          "tier": 2,
+          "color": "u",
+          "score": 1,
+          "cost": {
+            "u": 3,
+            "g": 2,
+            "k": 3
+          }
+        },
+        {
+          "id": "2-04",
+          "tier": 2,
+          "color": "k",
+          "score": 2,
+          "cost": {
+            "g": 5,
+            "r": 3
+          }
+        }
+      ],
+      "3": [
+        {
+          "id": "3-12",
+          "tier": 3,
+          "color": "w",
+          "score": 5,
+          "cost": {
+            "u": 7,
+            "k": 3
+          }
+        },
+        {
+          "id": "3-19",
+          "tier": 3,
+          "color": "r",
+          "score": 4,
+          "cost": {
+            "w": 3,
+            "g": 3,
+            "r": 6
+          }
+        },
+        {
+          "id": "3-07",
+          "tier": 3,
+          "color": "u",
+          "score": 4,
+          "cost": {
+            "w": 6,
+            "u": 3,
+            "k": 3
+          }
+        },
+        {
+          "id": "3-08",
+          "tier": 3,
+          "color": "u",
+          "score": 5,
+          "cost": {
+            "w": 7,
+            "k": 3
+          }
+        }
+      ]
+    },
+    "drawPileCounts": {
+      "1": 36,
+      "2": 26,
+      "3": 16
+    },
+    "nobles": [
+      {
+        "id": 1,
+        "name": "Mary Stuart",
+        "req": {
+          "g": 4,
+          "r": 4
+        }
+      },
+      {
+        "id": 6,
+        "name": "Catherine de' Medici",
+        "req": {
+          "u": 3,
+          "g": 3,
+          "r": 3
+        }
+      },
+      {
+        "id": 10,
+        "name": "Francis I of France",
+        "req": {
+          "w": 3,
+          "u": 3,
+          "g": 3
+        }
+      }
+    ],
+    "players": [
+      {
+        "side": "human",
+        "name": "玩家1",
+        "score": 0,
+        "tokens": {
+          "w": 1,
+          "u": 1,
+          "g": 1,
+          "r": 0,
+          "k": 0,
+          "y": 0
+        },
+        "bonuses": {
+          "w": 0,
+          "u": 0,
+          "g": 0,
+          "r": 0,
+          "k": 0,
+          "y": 0
+        },
+        "purchasedCards": [],
+        "reservedCards": [],
+        "nobles": []
+      },
+      {
+        "side": "bot",
+        "name": "AI",
+        "score": 0,
+        "tokens": {
+          "w": 0,
+          "u": 0,
+          "g": 1,
+          "r": 1,
+          "k": 1,
+          "y": 0
+        },
+        "bonuses": {
+          "w": 0,
+          "u": 0,
+          "g": 0,
+          "r": 0,
+          "k": 0,
+          "y": 0
+        },
+        "purchasedCards": [],
+        "reservedCards": [],
+        "nobles": []
+      }
+    ]
+  },
+  "moves": [
+    {
+      "index": 0,
+      "round": 1,
+      "actor": "system",
+      "text": "开始新对局",
+      "action": {
+        "type": "start",
+        "shuffleMode": "restore",
+        "matchMode": "ai",
+        "playerNames": [
+          "玩家1",
+          "AI"
+        ]
+      },
+      "reason": "",
+      "publicBoardAfter": {
+        "round": 1,
+        "activePlayer": "human",
+        "gameOver": false,
+        "scores": [
+          0,
+          0
+        ],
+        "bank": {
+          "w": 4,
+          "u": 4,
+          "g": 4,
+          "r": 4,
+          "k": 4,
+          "y": 5
+        },
+        "market": {
+          "1": [
+            {
+              "id": "1-37",
+              "tier": 1,
+              "color": "r",
+              "score": 0,
+              "cost": {
+                "g": 2,
+                "r": 1
+              }
+            },
+            {
+              "id": "1-05",
+              "tier": 1,
+              "color": "k",
+              "score": 0,
+              "cost": {
+                "g": 2,
+                "r": 1
+              }
+            },
+            {
+              "id": "1-26",
+              "tier": 1,
+              "color": "g",
+              "score": 0,
+              "cost": {
+                "w": 1,
+                "u": 1,
+                "r": 1,
+                "k": 2
+              }
+            },
+            {
+              "id": "1-25",
+              "tier": 1,
+              "color": "g",
+              "score": 0,
+              "cost": {
+                "w": 1,
+                "u": 1,
+                "r": 1,
+                "k": 1
+              }
+            }
+          ],
+          "2": [
+            {
+              "id": "2-27",
+              "tier": 2,
+              "color": "r",
+              "score": 2,
+              "cost": {
+                "w": 1,
+                "r": 4,
+                "k": 2
+              }
+            },
+            {
+              "id": "2-21",
+              "tier": 2,
+              "color": "g",
+              "score": 2,
+              "cost": {
+                "u": 2,
+                "k": 4
+              }
+            },
+            {
+              "id": "2-08",
+              "tier": 2,
+              "color": "u",
+              "score": 1,
+              "cost": {
+                "u": 3,
+                "g": 2,
+                "k": 3
+              }
+            },
+            {
+              "id": "2-04",
+              "tier": 2,
+              "color": "k",
+              "score": 2,
+              "cost": {
+                "g": 5,
+                "r": 3
+              }
+            }
+          ],
+          "3": [
+            {
+              "id": "3-12",
+              "tier": 3,
+              "color": "w",
+              "score": 5,
+              "cost": {
+                "u": 7,
+                "k": 3
+              }
+            },
+            {
+              "id": "3-19",
+              "tier": 3,
+              "color": "r",
+              "score": 4,
+              "cost": {
+                "w": 3,
+                "g": 3,
+                "r": 6
+              }
+            },
+            {
+              "id": "3-07",
+              "tier": 3,
+              "color": "u",
+              "score": 4,
+              "cost": {
+                "w": 6,
+                "u": 3,
+                "k": 3
+              }
+            },
+            {
+              "id": "3-08",
+              "tier": 3,
+              "color": "u",
+              "score": 5,
+              "cost": {
+                "w": 7,
+                "k": 3
+              }
+            }
+          ]
+        },
+        "drawPileCounts": {
+          "1": 36,
+          "2": 26,
+          "3": 16
+        },
+        "nobles": [
+          {
+            "id": 1,
+            "name": "Mary Stuart",
+            "req": {
+              "g": 4,
+              "r": 4
+            }
+          },
+          {
+            "id": 6,
+            "name": "Catherine de' Medici",
+            "req": {
+              "u": 3,
+              "g": 3,
+              "r": 3
+            }
+          },
+          {
+            "id": 10,
+            "name": "Francis I of France",
+            "req": {
+              "w": 3,
+              "u": 3,
+              "g": 3
+            }
+          }
+        ],
+        "players": [
+          {
+            "side": "human",
+            "name": "玩家1",
+            "score": 0,
+            "tokens": {
+              "w": 0,
+              "u": 0,
+              "g": 0,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "bonuses": {
+              "w": 0,
+              "u": 0,
+              "g": 0,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "purchasedCards": [],
+            "reservedCards": [],
+            "nobles": []
+          },
+          {
+            "side": "bot",
+            "name": "AI",
+            "score": 0,
+            "tokens": {
+              "w": 0,
+              "u": 0,
+              "g": 0,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "bonuses": {
+              "w": 0,
+              "u": 0,
+              "g": 0,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "purchasedCards": [],
+            "reservedCards": [],
+            "nobles": []
+          }
+        ]
+      }
+    },
+    {
+      "index": 1,
+      "round": 1,
+      "actor": "human",
+      "playerName": "玩家1",
+      "text": "玩家1 拿取了 白、蓝、绿 宝石",
+      "action": {
+        "type": "take",
+        "colors": [
+          "w",
+          "u",
+          "g"
+        ]
+      },
+      "reason": "",
+      "publicBoardAfter": {
+        "round": 1,
+        "activePlayer": "human",
+        "gameOver": false,
+        "scores": [
+          0,
+          0
+        ],
+        "bank": {
+          "w": 3,
+          "u": 3,
+          "g": 3,
+          "r": 4,
+          "k": 4,
+          "y": 5
+        },
+        "market": {
+          "1": [
+            {
+              "id": "1-37",
+              "tier": 1,
+              "color": "r",
+              "score": 0,
+              "cost": {
+                "g": 2,
+                "r": 1
+              }
+            },
+            {
+              "id": "1-05",
+              "tier": 1,
+              "color": "k",
+              "score": 0,
+              "cost": {
+                "g": 2,
+                "r": 1
+              }
+            },
+            {
+              "id": "1-26",
+              "tier": 1,
+              "color": "g",
+              "score": 0,
+              "cost": {
+                "w": 1,
+                "u": 1,
+                "r": 1,
+                "k": 2
+              }
+            },
+            {
+              "id": "1-25",
+              "tier": 1,
+              "color": "g",
+              "score": 0,
+              "cost": {
+                "w": 1,
+                "u": 1,
+                "r": 1,
+                "k": 1
+              }
+            }
+          ],
+          "2": [
+            {
+              "id": "2-27",
+              "tier": 2,
+              "color": "r",
+              "score": 2,
+              "cost": {
+                "w": 1,
+                "r": 4,
+                "k": 2
+              }
+            },
+            {
+              "id": "2-21",
+              "tier": 2,
+              "color": "g",
+              "score": 2,
+              "cost": {
+                "u": 2,
+                "k": 4
+              }
+            },
+            {
+              "id": "2-08",
+              "tier": 2,
+              "color": "u",
+              "score": 1,
+              "cost": {
+                "u": 3,
+                "g": 2,
+                "k": 3
+              }
+            },
+            {
+              "id": "2-04",
+              "tier": 2,
+              "color": "k",
+              "score": 2,
+              "cost": {
+                "g": 5,
+                "r": 3
+              }
+            }
+          ],
+          "3": [
+            {
+              "id": "3-12",
+              "tier": 3,
+              "color": "w",
+              "score": 5,
+              "cost": {
+                "u": 7,
+                "k": 3
+              }
+            },
+            {
+              "id": "3-19",
+              "tier": 3,
+              "color": "r",
+              "score": 4,
+              "cost": {
+                "w": 3,
+                "g": 3,
+                "r": 6
+              }
+            },
+            {
+              "id": "3-07",
+              "tier": 3,
+              "color": "u",
+              "score": 4,
+              "cost": {
+                "w": 6,
+                "u": 3,
+                "k": 3
+              }
+            },
+            {
+              "id": "3-08",
+              "tier": 3,
+              "color": "u",
+              "score": 5,
+              "cost": {
+                "w": 7,
+                "k": 3
+              }
+            }
+          ]
+        },
+        "drawPileCounts": {
+          "1": 36,
+          "2": 26,
+          "3": 16
+        },
+        "nobles": [
+          {
+            "id": 1,
+            "name": "Mary Stuart",
+            "req": {
+              "g": 4,
+              "r": 4
+            }
+          },
+          {
+            "id": 6,
+            "name": "Catherine de' Medici",
+            "req": {
+              "u": 3,
+              "g": 3,
+              "r": 3
+            }
+          },
+          {
+            "id": 10,
+            "name": "Francis I of France",
+            "req": {
+              "w": 3,
+              "u": 3,
+              "g": 3
+            }
+          }
+        ],
+        "players": [
+          {
+            "side": "human",
+            "name": "玩家1",
+            "score": 0,
+            "tokens": {
+              "w": 1,
+              "u": 1,
+              "g": 1,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "bonuses": {
+              "w": 0,
+              "u": 0,
+              "g": 0,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "purchasedCards": [],
+            "reservedCards": [],
+            "nobles": []
+          },
+          {
+            "side": "bot",
+            "name": "AI",
+            "score": 0,
+            "tokens": {
+              "w": 0,
+              "u": 0,
+              "g": 0,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "bonuses": {
+              "w": 0,
+              "u": 0,
+              "g": 0,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "purchasedCards": [],
+            "reservedCards": [],
+            "nobles": []
+          }
+        ]
+      }
+    },
+    {
+      "index": 2,
+      "round": 1,
+      "actor": "bot",
+      "playerName": "AI",
+      "text": "AI 拿取了 绿、红、黑 宝石",
+      "action": {
+        "type": "take",
+        "colors": [
+          "g",
+          "r",
+          "k"
+        ]
+      },
+      "reason": "",
+      "publicBoardAfter": {
+        "round": 1,
+        "activePlayer": "bot",
+        "gameOver": false,
+        "scores": [
+          0,
+          0
+        ],
+        "bank": {
+          "w": 3,
+          "u": 3,
+          "g": 2,
+          "r": 3,
+          "k": 3,
+          "y": 5
+        },
+        "market": {
+          "1": [
+            {
+              "id": "1-37",
+              "tier": 1,
+              "color": "r",
+              "score": 0,
+              "cost": {
+                "g": 2,
+                "r": 1
+              }
+            },
+            {
+              "id": "1-05",
+              "tier": 1,
+              "color": "k",
+              "score": 0,
+              "cost": {
+                "g": 2,
+                "r": 1
+              }
+            },
+            {
+              "id": "1-26",
+              "tier": 1,
+              "color": "g",
+              "score": 0,
+              "cost": {
+                "w": 1,
+                "u": 1,
+                "r": 1,
+                "k": 2
+              }
+            },
+            {
+              "id": "1-25",
+              "tier": 1,
+              "color": "g",
+              "score": 0,
+              "cost": {
+                "w": 1,
+                "u": 1,
+                "r": 1,
+                "k": 1
+              }
+            }
+          ],
+          "2": [
+            {
+              "id": "2-27",
+              "tier": 2,
+              "color": "r",
+              "score": 2,
+              "cost": {
+                "w": 1,
+                "r": 4,
+                "k": 2
+              }
+            },
+            {
+              "id": "2-21",
+              "tier": 2,
+              "color": "g",
+              "score": 2,
+              "cost": {
+                "u": 2,
+                "k": 4
+              }
+            },
+            {
+              "id": "2-08",
+              "tier": 2,
+              "color": "u",
+              "score": 1,
+              "cost": {
+                "u": 3,
+                "g": 2,
+                "k": 3
+              }
+            },
+            {
+              "id": "2-04",
+              "tier": 2,
+              "color": "k",
+              "score": 2,
+              "cost": {
+                "g": 5,
+                "r": 3
+              }
+            }
+          ],
+          "3": [
+            {
+              "id": "3-12",
+              "tier": 3,
+              "color": "w",
+              "score": 5,
+              "cost": {
+                "u": 7,
+                "k": 3
+              }
+            },
+            {
+              "id": "3-19",
+              "tier": 3,
+              "color": "r",
+              "score": 4,
+              "cost": {
+                "w": 3,
+                "g": 3,
+                "r": 6
+              }
+            },
+            {
+              "id": "3-07",
+              "tier": 3,
+              "color": "u",
+              "score": 4,
+              "cost": {
+                "w": 6,
+                "u": 3,
+                "k": 3
+              }
+            },
+            {
+              "id": "3-08",
+              "tier": 3,
+              "color": "u",
+              "score": 5,
+              "cost": {
+                "w": 7,
+                "k": 3
+              }
+            }
+          ]
+        },
+        "drawPileCounts": {
+          "1": 36,
+          "2": 26,
+          "3": 16
+        },
+        "nobles": [
+          {
+            "id": 1,
+            "name": "Mary Stuart",
+            "req": {
+              "g": 4,
+              "r": 4
+            }
+          },
+          {
+            "id": 6,
+            "name": "Catherine de' Medici",
+            "req": {
+              "u": 3,
+              "g": 3,
+              "r": 3
+            }
+          },
+          {
+            "id": 10,
+            "name": "Francis I of France",
+            "req": {
+              "w": 3,
+              "u": 3,
+              "g": 3
+            }
+          }
+        ],
+        "players": [
+          {
+            "side": "human",
+            "name": "玩家1",
+            "score": 0,
+            "tokens": {
+              "w": 1,
+              "u": 1,
+              "g": 1,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "bonuses": {
+              "w": 0,
+              "u": 0,
+              "g": 0,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "purchasedCards": [],
+            "reservedCards": [],
+            "nobles": []
+          },
+          {
+            "side": "bot",
+            "name": "AI",
+            "score": 0,
+            "tokens": {
+              "w": 0,
+              "u": 0,
+              "g": 1,
+              "r": 1,
+              "k": 1,
+              "y": 0
+            },
+            "bonuses": {
+              "w": 0,
+              "u": 0,
+              "g": 0,
+              "r": 0,
+              "k": 0,
+              "y": 0
+            },
+            "purchasedCards": [],
+            "reservedCards": [],
+            "nobles": []
+          }
+        ]
+      }
+    }
+  ],
+  "note": "每一步记录公开局面与玩家备注；隐藏牌堆的具体顺序只保存在本地游戏存档，不随复盘JSON导出。"
+}
