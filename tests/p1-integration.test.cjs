@@ -1,8 +1,12 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { ROOT, BASELINE, fixture, startGame, loadGame, plain, giveTokens, assertInvariants } = require('./helpers/game-harness.cjs');
+const actionFromEvent = event => event.action.type === 'take' ? { type: 'take', colors: [...event.action.colors] }
+  : event.action.type === 'blind_reserve' ? { type: 'blind_reserve', tier: event.action.tier }
+    : { type: event.action.type, cardId: event.action.card.id };
 
 for (const mode of ['ai', 'pvp']) {
   test(`${mode}: new games store easy and legacy-v1 without changing setup format`, () => {
@@ -14,12 +18,22 @@ for (const mode of ['ai', 'pvp']) {
   test(`${mode}: setup shows disabled future difficulties only in AI mode`, () => {
     const { api } = startGame({ mode }), html = api.makeMatchSetupHTML();
     assert.match(html, /value="easy" selected/);
-    assert.match(html, /value="normal" disabled>普通（尚未启用）/);
+    assert.match(html, /value="normal"[^>]*>普通/);
     assert.match(html, /value="hard" disabled>困难（尚未启用）/);
     if (mode === 'pvp') assert.match(html, /id="matchDifficultyRow" hidden style="display:none"/);
     else assert.doesNotMatch(html, /id="matchDifficultyRow" hidden/);
   });
 }
+
+test('new simple AI game executes the frozen legacy-v1 decision', () => {
+  const { api } = startGame();const state = api.getState();
+  state.turn = 1;state.rulePhase = 'action';
+  const expected = api.legacy.decide(api.observation(1), state.botRng);
+  api.botTurn();
+  const actual = state.replay.findLast(event => event.actor === 'bot' && ['take', 'buy', 'reserve', 'blind_reserve'].includes(event.action.type));
+  assert.deepEqual(actionFromEvent(actual), plain(expected.action));
+  assert.equal(state.aiVersion, 'legacy-v1');
+});
 
 for (const name of ['save-ai-initial.json', 'save-ai-pending.json', 'save-ai-midgame.json', 'save-ai-pre-replay.json',
   'save-pvp-discard.json', 'save-pvp-noble.json', 'save-pvp-midgame.json', 'save-pvp-final-response.json', 'save-pvp-ended.json']) {
@@ -38,10 +52,79 @@ test('unsupported difficulty cannot silently start a new game or advance the RNG
   const { api } = startGame(), state = api.getState(), before = plain(state);
   assert.throws(() => api.newGame('shuffle', null, { mode: 'ai', difficulty: 'hard' }), /尚未启用/);
   assert.deepEqual(plain(api.getState()), before);
-  state.turn = 1;state.aiDifficulty = 'normal';
+  state.turn = 1;state.aiDifficulty = 'hard';
   const unsupported = plain(state);
   assert.throws(() => api.botTurn(), /尚未启用/);
   assert.deepEqual(plain(state), unsupported);
+});
+
+test('normal starts and runs the frozen Hybrid C configuration while easy remains legacy-v1', () => {
+  const { api, storage } = startGame();
+  api.newGame('shuffle', null, { mode: 'ai', names: ['玩家1', 'AI'], difficulty: 'normal' });
+  const state = api.getState();assert.equal(state.aiDifficulty, 'normal');assert.equal(state.aiVersion, 'hybrid-v1');
+  assert.equal(state.aiConfigId, 'b10785820427d5e0cc516c51538ffb9ca019ea5ce9036fadd0aee5b32d392a1c');
+  assert.deepEqual(plain(api.hybridConfig), { terminal: true, reservation: true, scoring: true,
+    reservationRouteFix: true, zeroProgressComparison: true, planNodes: 16 });
+  assert.equal(crypto.createHash('sha256').update(JSON.stringify(plain(api.hybridConfig))).digest('hex'), api.hybridConfigId);
+  assert.equal(api.hybrid.configuration.reservationRouteFix, true);
+  assert.equal(api.hybrid.configuration.zeroProgressComparison, true);
+  assert.equal(api.hybrid.configuration.planNodes, 16);
+  state.turn = 1;state.rulePhase = 'action';
+  const expected = api.hybrid.decide(api.observation(1), api.rules, state.botRng);
+  api.botTurn();
+  assert.equal(state.turn, 0);assert.equal(state.round, 2);
+  const actual = state.replay.findLast(event => event.actor === 'bot' && ['take', 'buy', 'reserve', 'blind_reserve'].includes(event.action.type));
+  assert.deepEqual(actionFromEvent(actual), plain(expected.action), 'The game dispatcher executes the Hybrid C decision');
+  assert.equal(state.aiDifficulty, 'normal');assert.equal(state.aiVersion, 'hybrid-v1');
+  assert.equal(JSON.parse(storage.get('splendor_classic_v4')).aiDifficulty, 'normal');
+  const restored = loadGame({ saved: plain(state) }).api.getState();
+  assert.equal(restored.aiVersion, 'hybrid-v1');assert.equal(restored.aiConfigId, api.hybridConfigId);
+});
+
+test('an existing advanced-v1 normal save keeps its strategy and execution across reload', () => {
+  const saved = fixture('save-ai-midgame.json');saved.aiDifficulty = 'normal';saved.aiVersion = 'advanced-v1';
+  const { api } = loadGame({ saved }), state = api.getState();
+  assert.equal(state.aiDifficulty, 'normal');assert.equal(state.aiVersion, 'advanced-v1');
+  for (const key of ['players', 'bank', 'deck', 'market', 'setup', 'botRng', 'turn', 'round', 'replay']) {
+    assert.deepEqual(plain(state[key]), saved[key], key);
+  }
+  state.matchMode = 'ai';state.turn = 1;state.rulePhase = 'action';
+  const expected = api.advanced.decide(api.observation(1), api.rules, state.botRng);
+  api.botTurn();
+  const actual = state.replay.findLast(event => event.actor === 'bot' && ['take', 'buy', 'reserve', 'blind_reserve'].includes(event.action.type));
+  assert.deepEqual(actionFromEvent(actual), plain(expected.action), 'Historical advanced-v1 games stay on advanced-v1');
+});
+
+test('a legacy normal save without strategy metadata keeps the historical advanced-v1 policy', () => {
+  const saved = fixture('save-ai-midgame.json');saved.aiDifficulty = 'normal';delete saved.aiVersion;delete saved.aiConfigId;
+  const { api } = loadGame({ saved });
+  assert.equal(api.getState().aiDifficulty, 'normal');assert.equal(api.getState().aiVersion, 'advanced-v1');
+});
+
+test('same-board replay preserves the source match strategy version', () => {
+  const current = startGame();current.api.newGame('shuffle', null,
+    { mode: 'ai', names: ['玩家1', 'AI'], difficulty: 'normal' });
+  current.api.newGame('replay');
+  assert.equal(current.api.getState().aiVersion, 'hybrid-v1');
+  assert.equal(current.api.getState().aiConfigId, current.api.hybridConfigId);
+
+  const saved = fixture('save-ai-midgame.json');saved.aiDifficulty = 'normal';saved.aiVersion = 'advanced-v1';
+  const historical = loadGame({ saved });historical.api.newGame('replay');
+  assert.equal(historical.api.getState().aiVersion, 'advanced-v1');
+  assert.equal('aiConfigId' in historical.api.getState(), false);
+});
+
+test('Hybrid C observations omit hidden decks and the opponent private reserved-card identity', () => {
+  const { api } = startGame({ mode: 'pvp' }), state = api.getState();
+  assert.equal(api.blindReserve(1, 0), true);
+  state.turn = 1;state.rulePhase = 'action';
+  const observation = api.observation(1), hidden = observation.players[0].reserved[0];
+  assert.equal('deck' in observation, false);assert.equal('setup' in observation, false);
+  assert.equal('history' in observation, false);assert.equal('replay' in observation, false);
+  assert.equal(hidden.faceDown, true);assert.equal('id' in hidden, false);
+  assert.equal('score' in hidden, false);assert.equal('cost' in hidden, false);
+  const decision = api.hybrid.decide(observation, api.rules, state.botRng);
+  assert.ok(decision.action);
 });
 
 for (const [name, phase] of [['save-pvp-discard.json', 'discard'], ['save-pvp-noble.json', 'noble']]) {

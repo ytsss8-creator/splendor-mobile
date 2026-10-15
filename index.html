@@ -730,6 +730,1194 @@ afterAction(1)}
 });
 </script>
 <!-- END GENERATED legacy-v1 -->
+<!-- BEGIN GENERATED advanced-v1 -->
+<script>
+/* V1 advanced heuristic. Observation-only and deterministic; embedded for standalone HTML. */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.SplendorAdvancedAI = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function createPolicy(settings) {
+  'use strict';
+  settings = settings || {};
+  const configuration = Object.freeze({ investment: true, topK: 6, beamWidth: 1,
+    resourceNodes: 5, liquidity: false, threatConsistency: false, fallback: false,
+    fastQueue: true, memoEconomy: true, rootDefense: true, ...settings });
+  for (const key of ['topK', 'beamWidth', 'resourceNodes']) if (!Number.isInteger(configuration[key]) || configuration[key] < 1 || configuration[key] > 32) throw new RangeError(`Invalid ${key}`);
+  const COLORS = ['w', 'u', 'g', 'r', 'k'], ALL = [...COLORS, 'y'];
+  const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const tokenCount = tokens => ALL.reduce((sum, color) => sum + (tokens[color] || 0), 0);
+  let decisionEconomy = null;
+  function economyMemo(state) {
+    if (!decisionEconomy) return null;
+    let entry = decisionEconomy.get(state);
+    if (!entry) { entry = { remaining: [], engine: [], demand: [{}, {}], targets: [] };decisionEconomy.set(state, entry); }
+    return entry;
+  }
+  const safeCard = card => ({ id: card.id, tier: card.tier, color: card.color, score: card.score,
+    cost: Object.fromEntries(COLORS.filter(color => card.cost?.[color]).map(color => [color, card.cost[color]])),
+    ...(card.blindReserved ? { blindReserved: true } : {}) });
+
+  function shadowState(observation) {
+    const self = observation.self, market = Object.fromEntries([1, 2, 3].map(tier =>
+      [tier, observation.market[tier].map(safeCard)]));
+    const players = observation.players.map((player, side) => ({
+      score: player.score, tokens: { ...player.tokens }, bonuses: { ...player.bonuses },
+      cards: player.cards.map(safeCard), nobles: clone(player.nobles),
+      reserved: player.reserved.map((card, index) => card.faceDown
+        ? { id: `__opaque_reserve_${side}_${index}`, tier: card.tier, color: 'w', score: 0, cost: {}, blindReserved: true }
+        : safeCard(card)),
+    }));
+    const deck = {};
+    for (const tier of [1, 2, 3]) {
+      deck[tier] = Array.from({ length: observation.drawPileCounts[tier] }, (_, index) => ({
+        id: `__unknown_${tier}_${index}`, tier, color: 'w', score: 0, cost: {},
+      }));
+    }
+    return {
+      bank: { ...observation.bank }, market, deck, players, nobles: clone(observation.nobles),
+      turn: self, round: observation.round, over: !!observation.over,
+      endTrigger: !!observation.endTrigger, rulePhase: 'action',
+    };
+  }
+
+  function knownIdsOf(observation) {
+    return new Set([... [3, 2, 1].flatMap(tier => observation.market[tier].map(card => card.id)),
+      ...observation.players[observation.self].reserved.filter(card => !card.faceDown).map(card => card.id)]);
+  }
+
+  function normalizeOwnTurn(state, self) {
+    if (!state.over) { state.turn = self;state.rulePhase = 'action'; }
+    return state;
+  }
+
+  function chooseNobleOption(state, who, options) {
+    if (!options?.length) return undefined;
+    if (options.length === 1) return options[0];
+    const opponent = state.players[1 - who];
+    return [...options].sort((a, b) => {
+      const leftA = state.nobles.find(noble => noble.id === a), leftB = state.nobles.find(noble => noble.id === b);
+      const distance = noble => COLORS.reduce((sum, color) => sum + Math.max(0,
+        (noble.req[color] || 0) - (opponent.bonuses[color] || 0)), 0);
+      return distance(leftA) - distance(leftB) || a - b;
+    })[0];
+  }
+
+  function tokenUsefulness(state, who, color, knownIds, rules) {
+    const player = state.players[who];
+    if (color === 'y') return 2.5;
+    let best = 0;
+    const cards = [1, 2, 3].flatMap(tier => state.market[tier]).concat(player.reserved)
+      .filter(card => knownIds.has(card.id));
+    for (const card of cards) {
+      const price = rules.price(card, player);
+      if (price.req[color] > (player.tokens[color] || 0)) {
+        const remaining = Math.max(1, price.left);
+        const reward = card.score * 1.8 + 1.0;
+        best = Math.max(best, reward / (1 + remaining * 0.28));
+      }
+    }
+    return best + (player.tokens[color] ? 0.025 / player.tokens[color] : 0);
+  }
+
+  function settlementChoices(state, action, rules, who, knownIds) {
+    const scratch = rules.copyState(state);
+    const applied = rules.executeAction(scratch, action, who);
+    if (!applied.ok) return { discardColors: [], nobleId: undefined };
+    let pending = rules.prepareSettlement(scratch, who), discardColors = [];
+    while (pending.type === 'discard') {
+      const actions = rules.legalActions(scratch, who).filter(candidate => candidate.type === 'discard');
+      actions.sort((a, b) => tokenUsefulness(scratch, who, a.color, knownIds, rules)
+        - tokenUsefulness(scratch, who, b.color, knownIds, rules) || ALL.indexOf(a.color) - ALL.indexOf(b.color));
+      const choice = actions[0];
+      if (!choice) break;
+      discardColors.push(choice.color);
+      rules.executeAction(scratch, choice, who);
+      pending = rules.prepareSettlement(scratch, who);
+    }
+    return { discardColors, nobleId: pending.type === 'noble' ? chooseNobleOption(scratch, who, pending.options) : undefined };
+  }
+
+  function simulateFull(state, action, rules, who, knownIds) {
+    const choices = settlementChoices(state, action, rules, who, knownIds);
+    return { ...rules.simulate(state, action, choices), choices };
+  }
+
+  function takeSets(bank, rules) {
+    const available = COLORS.filter(color => bank[color] > 0), sets = [];
+    if (available.length < 3) {
+      if (available.length) sets.push(available);
+    } else {
+      for (let i = 0; i < available.length; i++) for (let j = i + 1; j < available.length; j++) {
+        for (let k = j + 1; k < available.length; k++) sets.push([available[i], available[j], available[k]]);
+      }
+    }
+    for (const color of COLORS) if (bank[color] >= 4) sets.push([color, color]);
+    return sets;
+  }
+
+  function targetDiscard(tokens, req, knownIds, player, observation, who) {
+    const result = { ...tokens };
+    while (tokenCount(result) > 10) {
+      const candidates = ALL.filter(color => result[color] > 0).map(color => {
+        let keep = color === 'y' ? 2.5 : Math.max(0, (req[color] || 0) - Math.max(0, result[color] - 1)) > 0 ? 1.8 : 0.15;
+        if (color !== 'y') {
+          for (const card of [...[1, 2, 3].flatMap(tier => observation.market[tier]), ...observation.players[who].reserved]) {
+            if (!knownIds.has(card.id)) continue;
+            const need = Math.max(0, (card.cost[color] || 0) - (player.bonuses[color] || 0) - (player.tokens[color] || 0));
+            if (need > 0) keep = Math.max(keep, 0.3 / need);
+          }
+        }
+        return { color, keep };
+      }).sort((a, b) => a.keep - b.keep || ALL.indexOf(a.color) - ALL.indexOf(b.color));
+      if (!candidates.length) break;
+      result[candidates[0].color]--;
+    }
+    return result;
+  }
+
+  function returnDiscards(bank, before, after) {
+    // Resource-search settlement must return every discarded token to the bank.
+    for (const color of ALL) bank[color] += before[color] - after[color];
+  }
+
+  function compactKey(node) {
+    return `${ALL.map(color => node.tokens[color]).join('')}:${COLORS.map(color => node.bank[color]).join('')}:` +
+      `${node.reservedIds.length}:${node.targetHeld ? 1 : 0}:${node.drawCounts[1]},${node.drawCounts[2]},${node.drawCounts[3]}`;
+  }
+
+  function planPriority(node, req) {
+    let missing = 0, available = 0;
+    for (const color of COLORS) {
+      const deficit = Math.max(0, req[color] - node.tokens[color]);
+      missing += deficit;available += Math.min(deficit, node.bank[color]);
+    }
+    const afterGold = Math.max(0, missing - node.tokens.y);
+    const blocked = Math.max(0, missing - node.tokens.y - available);
+    return node.path.length + Math.ceil(afterGold / 3) + blocked * 0.25;
+  }
+
+  function acquisitionPlan(state, target, rules, who, knownIds, observation, nodeLimit = 32) {
+    const initialPlayer = state.players[who], startingReserved = initialPlayer.reserved.map(card => card.id);
+    const start = { tokens: { ...initialPlayer.tokens }, bank: { ...state.bank }, reservedIds: startingReserved,
+      marketIds: [3, 2, 1].flatMap(tier => state.market[tier].map(card => card.id)),
+      drawCounts: { 1: state.deck[1].length, 2: state.deck[2].length, 3: state.deck[3].length },
+      targetHeld: startingReserved.includes(target.id), path: [] };
+    const queue = [start], seen = new Set([compactKey(start)]);let visited = 0;
+    const req = Object.fromEntries(COLORS.map(color => [color, Math.max(0,
+      (target.cost[color] || 0) - (initialPlayer.bonuses[color] || 0))]));
+    const canAfford = node => {
+      const tokens = node.tokens;
+      return COLORS.reduce((sum, color) => sum + Math.max(0, req[color] - tokens[color]), 0) <= tokens.y;
+    };
+    const enqueue = (next, key) => {
+      if (seen.has(key)) return;
+      if (configuration.fastQueue) { next.searchPriority = planPriority(next, req);next.searchKey = key; }
+      seen.add(key);queue.push(next);
+    };
+    const offer = node => {
+      if (node.path.length >= 5 || visited >= nodeLimit) return;
+      const deficit = color => Math.max(0, req[color] - node.tokens[color]);
+      for (const colors of takeSets(node.bank, rules)) {
+        if (!colors.some(color => deficit(color) > 0)) continue;
+        if (!rules.canTake({ bank: node.bank }, colors)) continue;
+        const tokens = { ...node.tokens }, bank = { ...node.bank };
+        for (const color of colors) { tokens[color]++;bank[color]--; }
+        const nextTokens = targetDiscard(tokens, req, knownIds, initialPlayer, observation, who);
+        returnDiscards(bank, tokens, nextTokens);
+        const next = { ...node, tokens: nextTokens, bank,
+          path: [...node.path, { action: { type: 'take', colors: [...colors] }, discardColors: ALL.flatMap(color =>
+            Array.from({ length: tokens[color] - nextTokens[color] }, () => color)) }] };
+        const key = compactKey(next);
+        enqueue(next, key);
+      }
+      if (node.bank.y <= 0 || node.reservedIds.length >= 3) return;
+      let reserveId;
+      if (node.marketIds.includes(target.id)) reserveId = target.id;
+      else reserveId = node.marketIds.find(id => id !== target.id && knownIds.has(id));
+      if (!reserveId) {
+        const tier = [1, 2, 3].find(value => node.drawCounts[value] > 0);
+        if (tier) {
+          const tokens = { ...node.tokens, y: node.tokens.y + 1 }, bank = { ...node.bank, y: node.bank.y - 1 };
+          const nextTokens = targetDiscard(tokens, req, knownIds, initialPlayer, observation, who);
+          returnDiscards(bank, tokens, nextTokens);
+          const drawCounts = { ...node.drawCounts, [tier]: node.drawCounts[tier] - 1 };
+          const next = { ...node, tokens: nextTokens, bank, drawCounts,
+            reservedIds: [...node.reservedIds, `__unknown_${tier}_${drawCounts[tier]}`],
+            path: [...node.path, { action: { type: 'blind_reserve', tier }, discardColors: ALL.flatMap(color =>
+              Array.from({ length: tokens[color] - nextTokens[color] }, () => color)) }] };
+          const key = compactKey(next);
+          enqueue(next, key);
+        }
+        return;
+      }
+      const tokens = { ...node.tokens, y: node.tokens.y + 1 }, bank = { ...node.bank, y: node.bank.y - 1 };
+      const nextTokens = targetDiscard(tokens, req, knownIds, initialPlayer, observation, who);
+      returnDiscards(bank, tokens, nextTokens);
+      const marketIds = node.marketIds.filter(id => id !== reserveId);
+      const next = { ...node, tokens: nextTokens, bank, marketIds,
+        reservedIds: [...node.reservedIds, reserveId], targetHeld: node.targetHeld || reserveId === target.id,
+        path: [...node.path, { action: { type: 'reserve', cardId: reserveId }, discardColors: ALL.flatMap(color =>
+          Array.from({ length: tokens[color] - nextTokens[color] }, () => color)) }] };
+      const key = compactKey(next);
+      enqueue(next, key);
+    };
+    while (queue.length && visited < nodeLimit) {
+      let node;
+      if (configuration.fastQueue) {
+        if (visited === 0) { start.searchPriority = planPriority(start, req);start.searchKey = compactKey(start); }
+        let index = 0;
+        for (let i = 1; i < queue.length; i++) {
+          const compare = queue[i].searchPriority - queue[index].searchPriority
+            || queue[i].path.length - queue[index].path.length || queue[i].searchKey.localeCompare(queue[index].searchKey);
+          if (compare < 0) index = i;
+        }
+        node = queue.splice(index, 1)[0];
+      } else {
+        queue.sort((a, b) => planPriority(a, req) - planPriority(b, req)
+          || a.path.length - b.path.length || compactKey(a).localeCompare(compactKey(b)));
+        node = queue.shift();
+      }
+      visited++;
+      if (canAfford(node)) return { actions: node.path, turns: node.path.length, tokens: node.tokens,
+        bank: node.bank, targetHeld: node.targetHeld, visited };
+      offer(node);
+    }
+    return null;
+  }
+
+  function projectedAction(state, item, rules, who, observation, knownIds) {
+    const choices = { discardColors: item.discardColors || [] };
+    const sim = rules.simulate(state, item.action, choices);
+    if (!sim.ok || sim.pending) return null;
+    return normalizeOwnTurn(sim.state, who);
+  }
+
+  function applyPlanAndBuy(state, target, plan, rules, who, observation, knownIds) {
+    let current = rules.copyState(state);normalizeOwnTurn(current, who);
+    for (const item of plan.actions) {
+      current = projectedAction(current, item, rules, who, observation, knownIds);
+      if (!current) return null;
+    }
+    const buy = { type: 'buy', cardId: target.id };
+    if (!rules.validateAction(current, buy, who).ok) return null;
+    const result = simulateFull(current, buy, rules, who, knownIds);
+    if (!result.ok || result.pending) return null;
+    return { state: result.state, choices: result.choices };
+  }
+
+  function targetRank(state, target, rules, who, knownIds) {
+    const player = state.players[who], price = rules.price(target, player);
+    const missing = Math.max(0, price.short - player.tokens.y);
+    const lowerTurns = Math.ceil(missing / 3);
+    const noble = state.nobles.reduce((best, value) => {
+      const before = COLORS.reduce((sum, color) => sum + Math.max(0,
+        (value.req[color] || 0) - (player.bonuses[color] || 0)), 0);
+      const after = COLORS.reduce((sum, color) => sum + Math.max(0,
+        (value.req[color] || 0) - (player.bonuses[color] || 0) - (target.color === color ? 1 : 0)), 0);
+      return Math.max(best, before - after === 0 && after === 0 ? 3.0 : before - after > 0 ? 0.35 : 0);
+    }, 0);
+    const stage = configuration.investment ? economicStage(state, who, rules, knownIds) : clamp(Math.max(player.score / 15, state.round / 18), 0, 1);
+    const engine = configuration.investment ? discountDemand(state, who, target.color, knownIds) * (1 - stage) * 2.4 : target.score === 0 ? (1 - stage) * 1.2 : 0;
+    const reserved = player.reserved.some(card => card.id === target.id) ? 0.35 : 0;
+    return target.score * 2.2 + noble + engine + reserved - lowerTurns * 0.32;
+  }
+
+  function relevantTargets(state, rules, who, knownIds) {
+    const player = state.players[who];
+    const options = [3, 2, 1].flatMap(tier => state.market[tier]).concat(player.reserved)
+      .filter(card => knownIds.has(card.id));
+    const ranked = options.map(card => ({ card, rank: targetRank(state, card, rules, who, knownIds),
+      affordable: rules.price(card, player).left === 0, reserved: player.reserved.some(value => value.id === card.id) }))
+      .sort((a, b) => Number(b.affordable) - Number(a.affordable) || Number(b.reserved) - Number(a.reserved)
+        || b.rank - a.rank || a.card.id.localeCompare(b.card.id));
+    const selected = ranked.slice(0, 10);
+    for (const item of ranked) if ((item.affordable || item.reserved) && !selected.some(value => value.card.id === item.card.id)) selected.push(item);
+    return selected.slice(0, 12).map(item => item.card);
+  }
+
+  function terminalValue(state, self, rules, knownIds, observation) {
+    if (state.over) {
+      const winner = rules.winnerSide(state);
+      const outcome = winner < 0 ? 0 : winner === self ? 10000 : -10000;
+      return outcome + (configuration.threatConsistency ? (state.players[self].score - state.players[1 - self].score) * 0.1
+        + (state.players[1 - self].cards.length - state.players[self].cards.length) * 0.001 : 0);
+    }
+    if (state.endTrigger && state.players[self].score >= 15 && self === 0) {
+      const opponent = 1;
+      const responseState = rules.copyState(state);responseState.turn = opponent;responseState.rulePhase = 'action';
+      const allResponses = rules.legalActions(responseState, opponent), buys = allResponses.filter(action => action.type === 'buy');
+      const responseActions = configuration.threatConsistency ? allResponses : buys.length ? buys : allResponses.slice(0, 1);
+      let worst = Infinity;
+      for (const action of responseActions) {
+        const sim = simulateFull(responseState, action, rules, opponent, knownIds);
+        if (!sim.ok || !sim.state.over) continue;
+        const winner = rules.winnerSide(sim.state);
+        const base = winner < 0 ? 0 : winner === self ? 10000 : -10000;
+        const outcome = base + (configuration.threatConsistency ? (sim.state.players[self].score - sim.state.players[opponent].score) * 0.1
+          + (sim.state.players[opponent].cards.length - sim.state.players[self].cards.length) * 0.001 : 0);
+        worst = Math.min(worst, outcome);
+      }
+      return Number.isFinite(worst) ? worst : -10000;
+    }
+    return null;
+  }
+
+  function reserveOpportunityCost(player, stage) {
+    const hidden = player.reserved.filter(card => card.blindReserved).length;
+    return player.reserved.length * (0.12 + stage * 0.22) + hidden * (0.85 + stage * 0.55)
+      + Math.max(0, player.reserved.length - 1) ** 2 * 0.35;
+  }
+
+  function visibleTargets(state, who, knownIds) {
+    const memo = economyMemo(state);if (memo?.targets[who]) return memo.targets[who];
+    const targets = [3, 2, 1].flatMap(tier => state.market[tier]).concat(state.players[who].reserved).filter(card => knownIds.has(card.id));
+    if (memo) memo.targets[who] = targets;
+    return targets;
+  }
+
+  function resourceLowerBound(card, player, bank, bonuses = player.bonuses) {
+    const missing = COLORS.map(color => Math.max(0, (card.cost[color] || 0) - (bonuses[color] || 0) - player.tokens[color]));
+    let gold = player.tokens.y;
+    // Gold removes concentrated color shortages before broad shortages.
+    while (gold > 0 && missing.some(n => n > 0)) { const index = missing.indexOf(Math.max(...missing));missing[index]--;gold--; }
+    const concentrated = Math.max(0, ...missing.map((n, i) => n - (n >= 2 && bank[COLORS[i]] >= 4 ? 1 : 0)));
+    return 1 + Math.max(Math.ceil(missing.reduce((a, b) => a + b, 0) / 3), concentrated);
+  }
+
+  function remainingActions(state, who, knownIds) {
+    const memo = economyMemo(state);if (memo?.remaining[who] !== undefined) return memo.remaining[who];
+    const player = state.players[who], cards = visibleTargets(state, who, knownIds).filter(card => card.score > 0);
+    const rates = cards.map(card => card.score / resourceLowerBound(card, player, state.bank)).sort((a, b) => b - a);
+    const rate = rates.length ? rates.slice(0, 4).reduce((a, b) => a + b, 0) / Math.min(4, rates.length) : 0.7;
+    const result = clamp((15 - player.score) / Math.max(0.5, rate), 1, 18);
+    if (memo) memo.remaining[who] = result;
+    return result;
+  }
+
+  function economicStage(state, who, rules, knownIds) {
+    const own = remainingActions(state, who, knownIds), opponent = remainingActions(state, 1 - who, knownIds);
+    return clamp(Math.max(Math.max(state.players[who].score, state.players[1 - who].score) / 15 * 0.7,
+      1 - Math.min(own, opponent) / 18), 0, 1);
+  }
+
+  function discountDemand(state, who, color, knownIds) {
+    const memo = economyMemo(state);if (memo?.demand[who][color] !== undefined) return memo.demand[who][color];
+    const player = state.players[who], targets = visibleTargets(state, who, knownIds).filter(card => card.score > 0);
+    let demand = 0, total = 0;
+    for (const card of targets) {
+      const weight = (card.score + 1) / resourceLowerBound(card, player, state.bank);
+      total += weight;if ((card.cost[color] || 0) > (player.bonuses[color] || 0)) demand += weight;
+    }
+    const noble = state.nobles.some(n => (n.req[color] || 0) > (player.bonuses[color] || 0)
+      && COLORS.reduce((s,c) => s + Math.max(0, (n.req[c] || 0) - player.bonuses[c]), 0) <= 5);
+    const result = (total ? demand / total : 0) + (noble ? 0.2 : 0);
+    if (memo) memo.demand[who][color] = result;
+    return result;
+  }
+
+  function engineResidual(state, who, rules, knownIds, stage) {
+    const memo = economyMemo(state);if (memo?.engine[who] !== undefined) return memo.engine[who];
+    const player = state.players[who], targets = visibleTargets(state, who, knownIds).filter(card => card.score > 0);
+    let saving = 0, totalWeight = 0, scoreMean = 0;
+    for (const card of targets) {
+      const after = resourceLowerBound(card, player, state.bank), before = resourceLowerBound(card, player, state.bank, {});
+      const weight = (card.score + 1) / after;
+      saving += Math.max(0, before - after) * weight;totalWeight += weight;scoreMean += card.score * weight;
+    }
+    const horizon = Math.min(remainingActions(state, who, knownIds), remainingActions(state, 1 - who, knownIds));
+    const futureBuys = totalWeight ? Math.min(horizon / 2, (15 - player.score) / Math.max(1, scoreMean / totalWeight), 6) : 0;
+    const discounts = totalWeight ? saving / totalWeight * futureBuys * (2.5 + 1.0 * (1 - stage)) : 0;
+    // Noble distance provides contingent value, never a compulsory route.
+    const noble = state.nobles.reduce((best, n) => {
+      const distance = COLORS.reduce((s,c) => s + Math.max(0, (n.req[c] || 0) - player.bonuses[c]), 0);
+      return Math.max(best, distance > 0 && distance <= horizon ? 12 * Math.exp(-distance * 0.55) * (1 - stage * 0.5) : 0);
+    }, 0);
+    const result = discounts + noble;
+    if (memo) memo.engine[who] = result;
+    return result;
+  }
+
+  function reserveLiability(state, who, knownIds) {
+    const player = state.players[who];let liability = 0, slow = 0;
+    for (const card of player.reserved) {
+      if (!knownIds.has(card.id)) { liability += 1.5;slow++;continue; }
+      const effort = resourceLowerBound(card, player, state.bank);
+      const blocked = COLORS.reduce((s,c) => s + Math.max(0, (card.cost[c] || 0) - player.bonuses[c] - player.tokens[c] - state.bank[c]), 0) > player.tokens.y;
+      liability += Math.max(0, effort - 1) * 0.65 + (blocked ? 1.5 : 0);
+      slow += Number(effort > 2 || blocked);
+    }
+    if (player.reserved.length === 3) liability += 1.5 + slow * 1.5;
+    return liability;
+  }
+
+  function reserveAssessment(before, after, action, self, rules, knownIds, endThreats) {
+    if (!['reserve', 'blind_reserve'].includes(action.type)) return null;
+    if (action.type === 'reserve' && endThreats.has(action.cardId)) return { kind: 'defense', effort: null, realizationProxy: null, penalty: 0 };
+    const card = action.type === 'reserve' ? after.players[self].reserved.find(c => c.id === action.cardId) : null;
+    const effort = card ? resourceLowerBound(card, after.players[self], after.bank) : null;
+    const demand = card ? discountDemand(after, self, card.color, knownIds) : 0;
+    const target = card && effort <= 3 && (card.score > 0 || demand > 0.5);
+    const receivedGold = after.players[self].tokens.y > before.players[self].tokens.y;
+    let saving = 0;
+    for (const goal of visibleTargets(before, self, knownIds).filter(c => c.score > 0)) {
+      saving = Math.max(saving, resourceLowerBound(goal, before.players[self], before.bank)
+        - resourceLowerBound(goal, after.players[self], after.bank) - 1);
+    }
+    return { kind: target ? 'target' : 'resource', effort,
+      realizationProxy: effort === null ? 0 : 1 / effort,
+      // This is a feasibility proxy, not a calibrated probability. Gold must
+      // cover its reserve action before offsetting the resource-reserve cost.
+      penalty: target ? 0.25 : Math.max(0, 1.5 - Math.max(0, saving) * 1.2) + (receivedGold ? 0 : 1.5) };
+  }
+
+  function actionWaste(before, after, action, choices, self, rules, knownIds) {
+    if (action.type !== 'take') return 0;
+    let bestReduction = 0;
+    for (const card of visibleTargets(before, self, knownIds)) bestReduction = Math.max(bestReduction,
+      rules.price(card, before.players[self]).left - rules.price(card, after.players[self]).left);
+    const discards = (choices.discardColors || []).reduce((s,c) => s + (c === 'y' ? 1.5 : 0.18), 0);
+    return discards + (bestReduction <= 0 ? 1.5 : 0);
+  }
+
+  function opponentThreatPenalty(state, self, rules, knownIds) {
+    const opponent = 1 - self;
+    if (self !== 1 || opponent !== 0 || state.players[opponent].score < 10) return 0;
+    const threatState = rules.copyState(state);threatState.turn = opponent;threatState.rulePhase = 'action';
+    let worst = 0;
+    for (const action of rules.legalActions(threatState, opponent)) {
+      if (action.type !== 'buy') continue;
+      const simulated = simulateFull(threatState, action, rules, opponent, knownIds);
+      if (!simulated.ok || !simulated.state.endTrigger || simulated.state.turn !== self) continue;
+      let bestReply = -10000;
+      const replies = rules.legalActions(simulated.state, self), replyBuys = replies.filter(reply => reply.type === 'buy');
+      for (const reply of replyBuys.length ? replyBuys : replies.slice(0, 1)) {
+        const response = simulateFull(simulated.state, reply, rules, self, knownIds);
+        if (!response.ok || !response.state.over) continue;
+        const winner = rules.winnerSide(response.state);
+        bestReply = Math.max(bestReply, winner < 0 ? 0 : winner === self ? 10000 : -10000);
+      }
+      if (bestReply < 0) worst = Math.min(worst, -600);
+      else if (bestReply === 0) worst = Math.min(worst, -160);
+    }
+    return worst;
+  }
+
+  function immediateEndThreats(state, self, rules, knownIds) {
+    const opponent = 1 - self, threats = new Set();
+    if (configuration.threatConsistency && state.endTrigger && self === 1) return threats;
+    if (state.players[opponent].score < 10) return threats;
+    const forecast = rules.copyState(state);forecast.turn = opponent;forecast.rulePhase = 'action';
+    for (const action of rules.legalActions(forecast, opponent)) {
+      if (action.type !== 'buy') continue;
+      const result = simulateFull(forecast, action, rules, opponent, knownIds);
+      if (result.ok && (result.state.over || result.state.endTrigger)) threats.add(action.cardId);
+    }
+    return threats;
+  }
+
+  function nextEndOutcome(state, self, rules, knownIds) {
+    if (state.over || state.endTrigger && self === 0 && state.players[self].score >= 15) return 1;
+    const opponent = 1 - self, player = state.players[opponent];
+    if (player.score < 7) return 1;
+    const forecast = rules.copyState(state);forecast.turn = opponent;forecast.rulePhase = 'action';
+    const all = rules.legalActions(forecast, opponent), alreadyEligible = rules.eligible(forecast, opponent).length > 0;
+    const actions = alreadyEligible ? all.filter(a => a.type !== 'take').concat(all.filter(a => a.type === 'take').slice(0, 1)) : all.filter(a => a.type === 'buy');
+    let worst = 1;
+    for (const action of actions) {
+      if (action.type === 'buy') {
+        const card = rules.findCard(forecast, action.cardId, opponent);
+        const noble = forecast.nobles.some(n => COLORS.every(c => player.bonuses[c] + (card.color === c ? 1 : 0) >= (n.req[c] || 0))) ? 3 : 0;
+        if (player.score + card.score + noble < 15 && !forecast.endTrigger) continue;
+      } else if (player.score + 3 < 15) continue;
+      const sim = simulateFull(forecast, action, rules, opponent, knownIds);
+      if (!sim.ok || sim.pending || !sim.state.over && !sim.state.endTrigger) continue;
+      if (sim.state.over) {
+        const winner = rules.winnerSide(sim.state);worst = Math.min(worst, winner < 0 ? 0 : winner === self ? 1 : -1);
+      } else {
+        // Only the mandatory classic final reply; no further opponent plies.
+        const replies = rules.legalActions(sim.state, self);let best = -1;
+        for (const reply of replies) {
+          const response = simulateFull(sim.state, reply, rules, self, knownIds);
+          if (!response.ok || response.pending || !response.state.over) continue;
+          const winner = rules.winnerSide(response.state);best = Math.max(best, winner < 0 ? 0 : winner === self ? 1 : -1);
+          if (best === 1) break;
+        }
+        worst = Math.min(worst, best);
+      }
+      if (worst === -1) break;
+    }
+    return worst;
+  }
+
+  function publicEndDistance(state, self) {
+    const opponent = state.players[1 - self];let distance = Infinity;
+    for (const card of [3, 2, 1].flatMap(t => state.market[t]).concat(opponent.reserved).filter(c => !c.id.startsWith('__'))) {
+      const noble = state.nobles.some(n => COLORS.every(c => opponent.bonuses[c] + (card.color === c ? 1 : 0) >= (n.req[c] || 0))) ? 3 : 0;
+      if (opponent.score + card.score + noble >= 15) distance = Math.min(distance, resourceLowerBound(card, opponent, state.bank));
+    }
+    return distance;
+  }
+
+  function stateUtility(state, cost, self, rules, knownIds, includeThreat = false, deadline = Infinity) {
+    const terminal = terminalValue(state, self, rules, knownIds);
+    if (terminal !== null && configuration.threatConsistency && cost > 0) {
+      // Projected own turns omit opponent development. Reaching 15 in that
+      // forecast is a finite race estimate, never a guaranteed actual win.
+      const score = state.players[self].score;
+      return score * 10.4 - cost * 2.35 + 60 / (1 + cost)
+        - Math.max(0, cost - deadline + 1) * 20 - (terminal < 0 ? 300 : 0);
+    }
+    if (terminal !== null) return terminal - cost * 45;
+    const player = state.players[self], opponent = state.players[1 - self];
+    const stage = configuration.investment ? economicStage(state, self, rules, knownIds) : clamp(Math.max((player.score + opponent.score) / 30, state.round / 18), 0, 1);
+    const scoreWeight = 7.2 + 3.2 * stage;
+    const turnCost = 1.25 + 1.1 * stage;
+    const discounts = COLORS.reduce((sum, color) => sum + (player.bonuses[color] || 0), 0);
+    const engineWeight = 1.65 * (1 - stage) ** 2 + 0.08;
+    const tiePotential = (opponent.cards.length - player.cards.length) * (0.04 + stage * 0.12);
+    const material = Math.min(10, tokenCount(player.tokens)) * (0.11 + (1 - stage) * 0.06);
+    const engine = configuration.investment ? engineResidual(state, self, rules, knownIds, stage) : discounts * engineWeight;
+    return player.score * scoreWeight - cost * turnCost + engine + material + tiePotential
+      - reserveOpportunityCost(player, stage) - (configuration.liquidity ? reserveLiability(state, self, knownIds) : 0)
+      + (includeThreat && !configuration.threatConsistency ? opponentThreatPenalty(state, self, rules, knownIds) : 0);
+  }
+
+  function routeSearch(state, rules, self, knownIds, observation) {
+    const deadline = configuration.threatConsistency ? publicEndDistance(state, self) : Infinity;
+    const initialTerminal = terminalValue(state, self, rules, knownIds);
+    if (initialTerminal !== null) return { value: initialTerminal, route: [], explored: 0 };
+    let best = { value: stateUtility(state, 0, self, rules, knownIds, true), route: [], projectedScore: state.players[self].score }, explored = 0;
+    let beam = [{ state, cost: 0, route: [] }];
+    for (let depth = 0; depth < 3; depth++) {
+      const children = [];
+      for (const node of beam) {
+        const targets = relevantTargets(node.state, rules, self, knownIds).slice(0, depth === 2 ? 1 : 2);
+        for (const target of targets) {
+          const plan = acquisitionPlan(node.state, target, rules, self, knownIds, observation, configuration.resourceNodes);
+          explored += plan?.visited || 1;
+          if (!plan || node.cost + plan.turns + 1 > 14) continue;
+          const transition = applyPlanAndBuy(node.state, target, plan, rules, self, observation, knownIds);
+          if (!transition) continue;
+          const cost = node.cost + plan.turns + 1, route = [...node.route, target.id];
+          const value = stateUtility(transition.state, cost, self, rules, knownIds, false, deadline);
+          if (value > best.value) best = { value, route, cost, projectedScore: transition.state.players[self].score };
+          children.push({ state: transition.state, cost, route, value });
+        }
+      }
+      children.sort((a, b) => b.value - a.value || a.cost - b.cost || a.route.join('|').localeCompare(b.route.join('|')));
+      beam = children.slice(0, configuration.beamWidth);
+      if (!beam.length) break;
+    }
+    // If the narrow route cannot finish, test two omitted known targets as
+    // standalone purchases. This is a bounded partial-route fallback.
+    if (configuration.fallback && best.projectedScore < 15) {
+      for (const target of relevantTargets(state, rules, self, knownIds).slice(2, 4)) {
+        const plan = acquisitionPlan(state, target, rules, self, knownIds, observation, configuration.resourceNodes);
+        explored += plan?.visited || 1;
+        if (!plan) continue;
+        const transition = applyPlanAndBuy(state, target, plan, rules, self, observation, knownIds);
+        if (!transition) continue;
+        const cost = plan.turns + 1, value = stateUtility(transition.state, cost, self, rules, knownIds, false, deadline);
+        if (value > best.value) best = { value, route: [target.id], cost, projectedScore: transition.state.players[self].score };
+      }
+    }
+    return { ...best, explored };
+  }
+
+  function quickUtility(state, self, rules, knownIds) {
+    const terminal = terminalValue(state, self, rules, knownIds);
+    if (terminal !== null) return terminal;
+    const player = state.players[self], opponent = state.players[1 - self];
+    const stage = configuration.investment ? economicStage(state, self, rules, knownIds) : clamp(Math.max((player.score + opponent.score) / 30, state.round / 18), 0, 1);
+    const scoreWeight = 7.2 + 3.2 * stage, turnCost = 1.25 + 1.1 * stage;
+    const discounts = COLORS.reduce((sum, color) => sum + (player.bonuses[color] || 0), 0);
+    const engine = configuration.investment ? engineResidual(state, self, rules, knownIds, stage) : discounts * (1.65 * (1 - stage) ** 2 + 0.08);
+    const material = Math.min(10, tokenCount(player.tokens)) * (0.11 + (1 - stage) * 0.06);
+    const tie = (opponent.cards.length - player.cards.length) * (0.04 + stage * 0.12);
+    const liability = configuration.liquidity ? reserveLiability(state, self, knownIds) : 0;
+    let best = player.score * scoreWeight + engine + material + tie - reserveOpportunityCost(player, stage) - liability;
+    const options = [3, 2, 1].flatMap(tier => state.market[tier]).concat(player.reserved)
+      .filter(card => knownIds.has(card.id));
+    for (const card of options) {
+      const price = rules.price(card, player), missing = {};
+      let inaccessible = 0, total = 0;
+      for (const color of COLORS) {
+        missing[color] = Math.max(0, price.req[color] - player.tokens[color]);
+        total += missing[color];
+        inaccessible += Math.max(0, missing[color] - state.bank[color]);
+      }
+      if (Math.max(0, inaccessible - player.tokens.y) > 0) continue;
+      const takes = Math.ceil(Math.max(0, total - player.tokens.y) / 3);
+      let nobleGain = 0;
+      for (const noble of state.nobles) if (COLORS.every(color =>
+        (player.bonuses[color] || 0) + (card.color === color ? 1 : 0) >= (noble.req[color] || 0))) nobleGain = 3;
+      const projected = player.score + card.score + nobleGain;
+      const residualEngine = configuration.investment ? discountDemand(state, self, card.color, knownIds) * (1 - stage) * 2.4 : (card.score === 0 ? (1 - stage) * 0.4 : 0);
+      const value = projected * scoreWeight - (takes + 1) * turnCost + engine + residualEngine
+        - reserveOpportunityCost(player, stage) - liability;
+      best = Math.max(best, value);
+    }
+    return best;
+  }
+
+  function computeDecision(observation, rules, rng = 0) {
+    if (!observation || !rules || !Number.isInteger(observation.self) || observation.over) {
+      throw new TypeError('advanced-v1 requires a live observation and rules engine');
+    }
+    const self = observation.self, knownIds = knownIdsOf(observation), state = shadowState(observation);
+    const endThreats = immediateEndThreats(state, self, rules, knownIds);
+    const actions = rules.legalActions(state, self).filter(action => ['take', 'buy', 'reserve', 'blind_reserve'].includes(action.type));
+    let evaluated = 0;
+    const candidates = [];
+    for (const action of actions) {
+      const sim = simulateFull(state, action, rules, self, knownIds);
+      if (!sim.ok || sim.pending) continue;
+      evaluated++;
+      const candidateState = normalizeOwnTurn(sim.state, self);
+      candidates.push({ action, choices: sim.choices, state: candidateState,
+        quick: quickUtility(candidateState, self, rules, knownIds), value: null, route: [] });
+      const candidate = candidates[candidates.length - 1];
+      candidate.reserve = configuration.liquidity ? reserveAssessment(state, candidateState, action, self, rules, knownIds, endThreats) : null;
+      candidate.penalty = configuration.liquidity ? (candidate.reserve?.penalty || 0)
+        + actionWaste(state, candidateState, action, sim.choices, self, rules, knownIds) : 0;
+      candidate.endOutcome = configuration.threatConsistency ? nextEndOutcome(candidateState, self, rules, knownIds) : 1;
+      candidate.riskPenalty = candidate.endOutcome < 0 ? 10000 : candidate.endOutcome === 0 ? 500 : 0;
+      candidate.penalty += candidate.riskPenalty;
+      candidate.quick -= candidate.penalty;
+    }
+    candidates.sort((a, b) => b.quick - a.quick || JSON.stringify(a.action).localeCompare(JSON.stringify(b.action)));
+    const refine = new Set(candidates.slice(0, configuration.topK));
+    for (const type of ['take', 'buy', 'reserve']) {
+      const candidate = candidates.find(value => type === 'reserve'
+        ? value.action.type === 'reserve' || value.action.type === 'blind_reserve'
+        : value.action.type === type);
+      if (candidate) refine.add(candidate);
+    }
+    for (const candidate of candidates) if ((candidate.action.type === 'reserve' || configuration.rootDefense && candidate.action.type === 'buy') && endThreats.has(candidate.action.cardId)) refine.add(candidate);
+    for (const candidate of candidates) {
+      const player = candidate.state.players[self];
+      if (player.score >= 15 || candidate.state.over) refine.add(candidate);
+    }
+    let routeNodes = 0;
+    for (const candidate of refine) {
+      const route = routeSearch(candidate.state, rules, self, knownIds, observation);
+      routeNodes += route.explored;
+      candidate.value = route.value - candidate.penalty;candidate.route = route.route;
+    }
+    let best = null;
+    for (const candidate of candidates) {
+      if (candidate.value === null) continue;
+      const value = candidate.value;
+      if (!best || value > best.value + 1e-9) best = { ...candidate, value };
+    }
+    if (!best) return { strategyId: 'advanced-v1', action: null, nextRng: rng >>> 0,
+      diagnostics: { candidates: actions.length, evaluated, refined: refine.size, routeNodes } };
+    return { strategyId: 'advanced-v1', action: clone(best.action), nextRng: rng >>> 0,
+      settlementChoices: clone(best.choices),
+      diagnostics: { candidates: actions.length, evaluated, refined: refine.size, routeNodes, value: best.value, route: [...best.route],
+        ...(configuration.liquidity ? { reserveKind: best.reserve?.kind, reserveAssessment: best.reserve } : {}),
+        ...(configuration.threatConsistency ? { endOutcome: best.endOutcome,
+          forcedLoss: candidates.every(c => c.endOutcome < 0 || terminalValue(c.state, self, rules, knownIds) !== null
+            && terminalValue(c.state, self, rules, knownIds) < 0) } : {}),
+        refinedActions: [...refine].map(candidate => ({ action: clone(candidate.action), quick: candidate.quick,
+          value: candidate.value, route: [...candidate.route] })) } };
+  }
+
+  function decide(observation, rules, rng = 0) {
+    decisionEconomy = configuration.memoEconomy ? new WeakMap() : null;
+    try { return computeDecision(observation, rules, rng); } finally { decisionEconomy = null; }
+  }
+
+  function evaluateAction(observation, rules, action) {
+    const self = observation.self, knownIds = knownIdsOf(observation), state = shadowState(observation);
+    const sim = simulateFull(state, action, rules, self, knownIds);if (!sim.ok || sim.pending) return null;
+    const next = normalizeOwnTurn(sim.state, self), threats = immediateEndThreats(state, self, rules, knownIds);
+    const reserve = configuration.liquidity ? reserveAssessment(state, next, action, self, rules, knownIds, threats) : null;
+    const outcome = configuration.threatConsistency ? nextEndOutcome(next, self, rules, knownIds) : 1;
+    const penalty = (configuration.liquidity ? (reserve?.penalty || 0) + actionWaste(state, next, action, sim.choices, self, rules, knownIds) : 0)
+      + (outcome < 0 ? 10000 : outcome === 0 ? 500 : 0);
+    const route = routeSearch(next, rules, self, knownIds, observation);
+    return { value: route.value - penalty, route: route.route };
+  }
+
+  function discardColors(observation, rules) {
+    const known = knownIdsOf(observation), state = shadowState(observation), who = observation.self;
+    state.rulePhase = 'discard';
+    const colors = [], scratch = rules.copyState(state);
+    while (tokenCount(scratch.players[who].tokens) > 10) {
+      const action = rules.legalActions(scratch, who).filter(value => value.type === 'discard')
+        .sort((a, b) => tokenUsefulness(scratch, who, a.color, known, rules) - tokenUsefulness(scratch, who, b.color, known, rules)
+          || ALL.indexOf(a.color) - ALL.indexOf(b.color))[0];
+      if (!action) break;
+      colors.push(action.color);rules.executeAction(scratch, action, who);
+      rules.prepareSettlement(scratch, who);
+    }
+    return colors;
+  }
+
+  function chooseNoble(observation, options) {
+    const state = shadowState(observation);
+    return chooseNobleOption(state, observation.self, options);
+  }
+
+  return Object.freeze({ strategyId: 'advanced-v1', decide, discardColors, chooseNoble, create: createPolicy, configuration,
+    _internals: Object.freeze({ shadowState, knownIdsOf, acquisitionPlan, applyPlanAndBuy, simulateFull,
+      routeSearch, terminalValue, economicStage, engineResidual, resourceLowerBound,
+      nextEndOutcome, publicEndDistance, evaluateAction, reserveAssessment, reserveLiability }) });
+});
+</script>
+<!-- END GENERATED advanced-v1 -->
+<!-- BEGIN GENERATED hybrid-v1 -->
+<script>
+/* Experimental, observation-only tactical wrapper around frozen legacy-v1. */
+(function (root, factory) {
+  const Legacy = typeof module === 'object' && module.exports ? require('./legacy-v1.js') : root.SplendorLegacyAI;
+  const Advanced = typeof module === 'object' && module.exports ? require('./advanced-v1.js') : root.SplendorAdvancedAI;
+  const api = factory(Legacy, Advanced);
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.SplendorHybridAI = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (Legacy, Advanced) {
+  'use strict';
+  const COLORS = ['w', 'u', 'g', 'r', 'k'];
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const actionKey = action => JSON.stringify(action);
+
+  function create(settings = {}) {
+    if (!Legacy?.decide || !Advanced?._internals?.shadowState) throw new Error('Hybrid requires legacy-v1 and advanced-v1 adapters');
+    const configuration = Object.freeze({ terminal: true, reservation: true, scoring: true,
+      reservationRouteFix: false, zeroProgressComparison: false, planNodes: 16, ...settings });
+    if (!Number.isInteger(configuration.planNodes) || configuration.planNodes < 1 || configuration.planNodes > 32) {
+      throw new RangeError('Invalid hybrid planNodes');
+    }
+
+    function stateOf(observation) { return Advanced._internals.shadowState(observation); }
+    function knownIdsOf(observation) { return Advanced._internals.knownIdsOf(observation); }
+    function visibleLegalActions(state, who, rules) {
+      return rules.legalActions(state, who).filter(action =>
+        !(action.type === 'buy' && String(action.cardId).startsWith('__opaque_reserve_')));
+    }
+
+    // Simulate only public information and select the same legacy discard/noble
+    // settlement unless a tactical line explicitly needs the better noble choice.
+    function simulateSettled(state, action, who, rules, noblePolicy = 'legacy') {
+      const scratch = rules.copyState(state);scratch.turn = who;scratch.rulePhase = 'action';
+      const applied = rules.executeAction(scratch, action, who);
+      if (!applied.ok) return null;
+      const choices = { discardColors: [] };let pending = rules.prepareSettlement(scratch, who),guard = 0;
+      while (pending.type !== 'complete' && guard++ < 12) {
+        if (pending.type === 'discard') {
+          const observation = rules.observe(scratch, who),suggested = Legacy.discardColors(observation) || [];
+          const action = suggested.find(color => rules.legalActions(scratch, who).some(candidate => candidate.type === 'discard' && candidate.color === color))
+            ? { type: 'discard', color: suggested.find(color => rules.legalActions(scratch, who).some(candidate => candidate.type === 'discard' && candidate.color === color)) }
+            : rules.legalActions(scratch, who).find(candidate => candidate.type === 'discard');
+          if (!action) return null;
+          choices.discardColors.push(action.color);
+          if (!rules.executeAction(scratch, action, who).ok) return null;
+        } else if (pending.type === 'noble') {
+          const observation = rules.observe(scratch, who);
+          choices.nobleId = noblePolicy === 'advanced'
+            ? Advanced.chooseNoble(observation, pending.options) : pending.options[0];
+          if (!rules.executeAction(scratch, { type: 'noble', id: choices.nobleId }, who).ok) return null;
+        } else return null;
+        pending = rules.prepareSettlement(scratch, who);
+      }
+      if (pending.type !== 'complete') return null;
+      const result = rules.simulate(state, action, choices);
+      return result.ok && !result.pending ? { ...result, choices } : null;
+    }
+
+    function terminalWinner(state, self, rules) {
+      if (state.over) return rules.winnerSide(state) === self;
+      if (!state.endTrigger) return false;
+      const responder = state.turn;
+      if (responder !== 1 - self) return false;
+      const replies = visibleLegalActions(state, responder, rules);
+      // No legal final response is a blocked game, not a proven win for either side.
+      if (!replies.length) return false;
+      // Purchases are the only action class that can change a completed score.
+      // Keep one legal non-purchase as the representative of the unchanged line.
+      const outcomeChanging = replies.filter(action => action.type === 'buy');
+      const unchanged = replies.find(action => action.type !== 'buy');
+      if (unchanged) outcomeChanging.push(unchanged);
+      return outcomeChanging.every(action => {
+        const result = simulateSettled(state, action, responder, rules, 'advanced');
+        return !!result && result.state.over && rules.winnerSide(result.state) === self;
+      });
+    }
+
+    function forcedWinningActions(state, actor, rules) {
+      // Only purchases can change score here. Takes and reserves cannot award a
+      // noble because they do not add a permanent bonus.
+      const candidates = visibleLegalActions(state, actor, rules).filter(action => action.type === 'buy');
+      const winning = [];
+      for (const action of candidates) {
+        const result = simulateSettled(state, action, actor, rules, 'advanced');
+        if (result && terminalWinner(result.state, actor, rules)) winning.push({ action, result });
+      }
+      return winning;
+    }
+
+    function pointsAfter(state, action, self, rules) {
+      const result = simulateSettled(state, action, self, rules, 'advanced');
+      return result ? { result, gained: result.state.players[self].score - state.players[self].score } : null;
+    }
+
+    function terminalTactic(observation, state, baseAction, rules) {
+      const self = observation.self, legal = visibleLegalActions(state, self, rules), wins = [];
+      for (const action of legal) {
+        if (action.type !== 'buy') continue;
+        const evaluated = pointsAfter(state, action, self, rules);
+        if (evaluated && terminalWinner(evaluated.result.state, self, rules)) wins.push({ action, ...evaluated });
+      }
+      if (wins.length && !wins.some(candidate => actionKey(candidate.action) === actionKey(baseAction))) {
+        wins.sort((a, b) => b.gained - a.gained || Number(b.action.type === 'buy') - Number(a.action.type === 'buy')
+          || actionKey(a.action).localeCompare(actionKey(b.action)));
+        return { action: wins[0].action, kind: 'forced-win', evidence: { winningActions: wins.map(item => item.action) } };
+      }
+
+      const base = simulateSettled(state, baseAction, self, rules, 'legacy');
+      if (!base || base.state.over) return null;
+      const opponent = 1 - self, threats = forcedWinningActions(base.state, opponent, rules);
+      if (!threats.length) return null;
+      const threatenedMarketIds = new Set(threats.map(item => item.action.cardId)
+        .filter(id => base.state.market && [1, 2, 3].some(tier => base.state.market[tier].some(card => card.id === id))));
+      const defenses = [];
+      for (const id of threatenedMarketIds) for (const type of ['buy', 'reserve']) {
+        const action = type === 'buy' ? { type, cardId: id } : { type, cardId: id };
+        if (!rules.validateAction(state, action, self).ok) continue;
+        const result = simulateSettled(state, action, self, rules, 'advanced');
+        if (!result || (result.state.over && rules.winnerSide(result.state) !== self)) continue;
+        if (!result.state.over && forcedWinningActions(result.state, opponent, rules).length) continue;
+        defenses.push({ action, result, gained: result.state.players[self].score - state.players[self].score });
+      }
+      if (!defenses.length) return null;
+      defenses.sort((a, b) => Number(b.action.type === 'buy') - Number(a.action.type === 'buy')
+        || b.gained - a.gained || actionKey(a.action).localeCompare(actionKey(b.action)));
+      return { action: defenses[0].action, kind: 'threat-defense', evidence: {
+        forcedThreats: threats.map(item => item.action), defensiveAction: defenses[0].action,
+      } };
+    }
+
+    function hasCurrentCommitment(state, observation, rules, knownIds) {
+      const self = observation.self;
+      return state.players[self].reserved.some(card => {
+        if (!knownIds.has(card.id)) return false;
+        const plan = Advanced._internals.acquisitionPlan(state, card, rules, self, knownIds, observation, configuration.planNodes);
+        return !!plan && plan.turns <= 1;
+      });
+    }
+
+    // Compare only the public position represented by the observation-backed
+    // shadow state. Turn counters, RNG, and opaque deck identities are excluded.
+    function publicPositionKey(state) {
+      return JSON.stringify({
+        bank: state.bank,
+        market: Object.fromEntries([1, 2, 3].map(tier => [tier, state.market[tier].map(card => card.id)])),
+        drawCounts: Object.fromEntries([1, 2, 3].map(tier => [tier, state.deck[tier].length])),
+        nobles: state.nobles.map(noble => noble.id),
+        players: state.players.map(player => ({ score: player.score, tokens: player.tokens,
+          bonuses: player.bonuses, cards: player.cards.map(card => card.id),
+          nobles: player.nobles.map(noble => noble.id), reserved: player.reserved.map(card => card.id) })),
+      });
+    }
+
+    function scoreUnlocksEngine(state, postPurchase, observation, rules, knownIds, reservedId) {
+      const goals = [3, 2, 1].flatMap(tier => observation.market[tier])
+        .filter(card => card.score > 0 && card.id !== reservedId);
+      for (const goal of goals) {
+        const before = Advanced._internals.acquisitionPlan(state, goal, rules, observation.self,
+          knownIds, observation, configuration.planNodes);
+        if (!before) continue;
+        const projected = rules.copyState(postPurchase);projected.turn = observation.self;projected.rulePhase = 'action';
+        const projectedObservation = rules.observe(projected, observation.self);
+      // Replacements in a simulated deck are opaque placeholders. Preserve the
+      // original public-card set so those synthetic ids never become targets.
+      const projectedKnown = knownIds;
+        const after = Advanced._internals.acquisitionPlan(projected, goal, rules, observation.self,
+          projectedKnown, projectedObservation, configuration.planNodes);
+        if (after && before.turns - after.turns >= 1) return { cardId: goal.id, actionsSaved: before.turns - after.turns };
+      }
+      return null;
+    }
+
+    function reserveTactic(observation, state, baseAction, rules, audit) {
+      const self = observation.self, player = state.players[self], knownIds = knownIdsOf(observation);
+      audit.calls++;
+      if (baseAction.type !== 'take') { audit.rejectedBaseAction++; return null; }
+      if (player.reserved.length >= 3) { audit.rejectedFullSlots++; return null; }
+      if (state.bank.y <= 0) { audit.rejectedNoGold++; return null; }
+      if (hasCurrentCommitment(state, observation, rules, knownIds)) { audit.rejectedCommitment++; return null; }
+      const baseline = simulateSettled(state, baseAction, self, rules, 'legacy');
+      if (!baseline) { audit.rejectedBaselineSimulation++; return null; }
+      const noProgress = publicPositionKey(state) === publicPositionKey(baseline.state);
+      if (noProgress) audit.zeroProgressBase++;
+      const market = [3, 2, 1].flatMap(tier => state.market[tier]).filter(card => knownIds.has(card.id));
+      audit.eligibleDecisions++;
+      const candidates = [];
+      for (const target of market) {
+        audit.targets++;
+        if (target.score === 0 && ![3, 2, 1].flatMap(tier => state.market[tier])
+          .some(card => card.score > 0 && (card.cost[target.color] || 0) > 0)) { audit.rejectedZeroNoUnlock++; continue; }
+        const direct = Advanced._internals.acquisitionPlan(state, target, rules, self, knownIds,
+          observation, configuration.planNodes);
+        if (!direct) { audit.rejectedNoDirectPlan++; continue; }
+        if (!configuration.reservationRouteFix && direct.turns < 2) { audit.rejectedDirectUnderTwo++; continue; }
+        const action = { type: 'reserve', cardId: target.id };
+        const sim = simulateSettled(state, action, self, rules, 'legacy');
+        if (!sim || sim.state.players[self].reserved.length > 3) { audit.rejectedReserveSimulation++; continue; }
+        const planned = rules.copyState(sim.state);planned.turn = self;planned.rulePhase = 'action';
+        const plannedObservation = rules.observe(planned, self), plannedKnown = knownIds;
+        const heldTarget = planned.players[self].reserved.find(card => card.id === target.id);
+        if (!heldTarget) { audit.rejectedTargetMissing++; continue; }
+        const after = Advanced._internals.acquisitionPlan(planned, heldTarget, rules, self,
+          plannedKnown, plannedObservation, configuration.planNodes);
+        if (!after) { audit.rejectedNoPostReservePlan++; continue; }
+        if (after.turns > 1) { audit.rejectedBeyondTwoActions++; continue; }
+        const immediateRoute = configuration.reservationRouteFix && direct.turns === 1
+          && direct.actions.length === 1 && direct.actions[0].action.type === 'reserve'
+          && direct.actions[0].action.cardId === target.id && after.turns === 0;
+        if (configuration.reservationRouteFix && direct.turns < 2 && !immediateRoute) {
+          audit.rejectedDirectUnderTwo++; continue;
+        }
+        let baselinePlan = null, baselineReplay = null;
+        if (immediateRoute) {
+          const baselineTarget = baseline.state.market[target.tier].find(card => card.id === target.id);
+          if (!baselineTarget) { audit.rejectedBaselineTargetMissing++; continue; }
+          const baselineState = rules.copyState(baseline.state);baselineState.turn = self;baselineState.rulePhase = 'action';
+          const baselineObservation = rules.observe(baselineState, self);
+          baselinePlan = Advanced._internals.acquisitionPlan(baselineState, baselineTarget, rules, self,
+            knownIds, baselineObservation, configuration.planNodes);
+          if (!baselinePlan) { audit.rejectedNoBaselinePlan++; continue; }
+          baselineReplay = Advanced._internals.applyPlanAndBuy(baselineState, baselineTarget, baselinePlan,
+            rules, self, baselineObservation, knownIds);
+          if (!baselineReplay) { audit.rejectedBaselinePlanReplay++; continue; }
+        }
+        // The base action and candidate reserve both consume the current turn.
+        // Compare the remaining, rule-replayed resource actions after each one;
+        // do not subtract the reserve action again from a plan that already
+        // starts after the base action has settled.
+        const actionSavings = immediateRoute ? baselinePlan.turns - after.turns : direct.turns - after.turns - 1;
+        const slotActionCost = 0.5 + player.reserved.length * 0.5;
+        let goldActionBenefit = 0;
+        if (sim.state.players[self].tokens.y > player.tokens.y) {
+          const withoutGold = rules.copyState(planned);
+          withoutGold.players[self].tokens.y--;withoutGold.bank.y++;
+          const noGoldPlan = Advanced._internals.acquisitionPlan(withoutGold, heldTarget, rules, self,
+            plannedKnown, plannedObservation, configuration.planNodes);
+          if (noGoldPlan) goldActionBenefit = Math.max(0, noGoldPlan.turns - after.turns);
+        }
+        const verified = Advanced._internals.applyPlanAndBuy(planned, heldTarget, after, rules, self,
+          plannedObservation, plannedKnown);
+        if (!verified) { audit.rejectedPlanReplay++; continue; }
+        let unlock = null;
+        if (target.score === 0) unlock = scoreUnlocksEngine(state, verified.state, observation, rules, knownIds, target.id);
+        if (target.score === 0 && !unlock) { audit.rejectedZeroNoScoringUnlock++; continue; }
+        const opponentCanBuyTarget = rules.price(target, state.players[1 - self]).left === 0;
+        if (immediateRoute && !noProgress && !opponentCanBuyTarget) {
+          audit.rejectedImmediateNoTacticalGain++; continue;
+        }
+        const meetsNetCost = actionSavings >= 1 + slotActionCost
+          || goldActionBenefit >= 1 && actionSavings >= slotActionCost;
+        const noProgressBenefit = !meetsNetCost && configuration.zeroProgressComparison && noProgress && immediateRoute
+          && actionSavings >= 0 && slotActionCost <= 1 && (target.score > 0 || !!unlock)
+          && (actionSavings >= slotActionCost || goldActionBenefit >= 1 || opponentCanBuyTarget);
+        if (!meetsNetCost && !noProgressBenefit) {
+          audit.rejectedNetCost++; continue;
+        }
+        audit.candidates++;
+        candidates.push({ action, evidence: {
+          targetId: target.id, targetScore: target.score, resourceActionsWithoutReserve: direct.turns,
+          resourceActionsAfterReserve: after.turns, buyWithinOwnActions: after.turns + 1,
+          totalOwnActionsIncludingReserve: 1 + after.turns + 1,
+          baselineResourceActionsAfterCurrentAction: baselinePlan?.turns ?? null,
+          actionsSaved: actionSavings, slotActionCost, goldReceived: sim.state.players[self].tokens.y - player.tokens.y,
+          goldActionBenefit, opponentCanBuyTarget, acceptedByZeroProgressComparison: !!noProgressBenefit,
+          slotsBefore: player.reserved.length, slotsAfterReserve: sim.state.players[self].reserved.length,
+          replayablePlan: after.actions, zeroPointEngineUnlock: unlock,
+        } });
+      }
+      if (!candidates.length) return null;
+      candidates.sort((a, b) => b.evidence.actionsSaved - a.evidence.actionsSaved
+        || b.evidence.targetScore - a.evidence.targetScore || a.evidence.targetId.localeCompare(b.evidence.targetId));
+      return { ...candidates[0], kind: 'target-reserve' };
+    }
+
+    function zeroProgressTactic(observation, state, baseAction, rules, audit) {
+      audit.calls++;
+      if (!configuration.zeroProgressComparison || baseAction.type !== 'take') return null;
+      const self = observation.self, knownIds = knownIdsOf(observation);
+      const baseline = simulateSettled(state, baseAction, self, rules, 'legacy');
+      if (!baseline || publicPositionKey(state) !== publicPositionKey(baseline.state)) return null;
+      audit.zeroProgressPositions++;
+      const routeBudget = Math.min(configuration.planNodes, 12);
+      const baseState = rules.copyState(baseline.state);baseState.turn = self;baseState.rulePhase = 'action';
+      const baseObservation = rules.observe(baseState, self);
+      const goals = [3, 2, 1].flatMap(tier => state.market[tier])
+        .concat(state.players[self].reserved.filter(card => knownIds.has(card.id)))
+        .filter(card => knownIds.has(card.id) && card.score > 0);
+      const baseRoutes = [];
+      for (const target of goals) {
+        const basePlan = Advanced._internals.acquisitionPlan(baseState, target, rules, self,
+          knownIds, baseObservation, routeBudget);
+        if (!basePlan) continue;
+        const replay = Advanced._internals.applyPlanAndBuy(baseState, target, basePlan,
+          rules, self, baseObservation, knownIds);
+        if (replay) baseRoutes.push({ target, turns: basePlan.turns });
+      }
+      const heldIds = new Set(state.players[self].reserved.map(card => card.id));
+      baseRoutes.sort((a, b) => Number(heldIds.has(b.target.id)) - Number(heldIds.has(a.target.id))
+        || b.target.score - a.target.score || a.turns - b.turns || a.target.id.localeCompare(b.target.id));
+      baseRoutes.length = Math.min(baseRoutes.length, 4);
+      const candidates = [], routeOptions = [];
+      for (const action of visibleLegalActions(state, self, rules)) {
+        if (!['take', 'reserve', 'buy'].includes(action.type) || actionKey(action) === actionKey(baseAction)) continue;
+        const result = simulateSettled(state, action, self, rules, 'legacy');
+        if (!result) continue;
+        if (action.type === 'buy') {
+          const gained = result.state.players[self].score - state.players[self].score;
+          if (gained > 0) candidates.push({ action, target: result.state.players[self].cards.at(-1),
+            beforeTurns: 0, afterTurns: 0, saved: 0, plan: [], immediateScore: gained,
+            slotActionCost: 0, goldReceived: 0 });
+          continue;
+        }
+        let bestRoute = null;
+        for (const route of baseRoutes) {
+          const target = result.state.market[route.target.tier].find(card => card.id === route.target.id)
+            || result.state.players[self].reserved.find(card => card.id === route.target.id);
+          if (!target) continue;
+          const beforeLeft = rules.price(route.target, baseState.players[self]).left;
+          const afterLeft = rules.price(target, result.state.players[self]).left;
+          const relief = beforeLeft - afterLeft;
+          if (relief <= 0) continue;
+          const candidateRoute = { route, target, result, relief };
+          if (!bestRoute || relief > bestRoute.relief || relief === bestRoute.relief
+            && (target.score > bestRoute.target.score || target.score === bestRoute.target.score
+              && target.id.localeCompare(bestRoute.target.id) < 0)) bestRoute = candidateRoute;
+        }
+        if (bestRoute) routeOptions.push({ action, ...bestRoute });
+      }
+      routeOptions.sort((a, b) => b.relief - a.relief || b.target.score - a.target.score
+        || Number(b.action.type === 'reserve') - Number(a.action.type === 'reserve')
+        || actionKey(a.action).localeCompare(actionKey(b.action)));
+      audit.candidateActions = routeOptions.length;
+      for (const option of routeOptions.slice(0, 3)) {
+          const { action, route, target, result } = option;
+          const nextState = rules.copyState(result.state);nextState.turn = self;nextState.rulePhase = 'action';
+          const nextObservation = rules.observe(nextState, self);
+          const plan = Advanced._internals.acquisitionPlan(nextState, target, rules, self,
+            knownIds, nextObservation, routeBudget);
+          if (!plan || plan.turns >= route.turns || plan.turns > 2) continue;
+          audit.searchedRoutes++;
+          const verified = Advanced._internals.applyPlanAndBuy(nextState, target, plan,
+            rules, self, nextObservation, knownIds);
+          if (!verified) continue;
+          const slotActionCost = action.type === 'reserve' ? 0.5 + state.players[self].reserved.length * 0.5 : 0;
+          if (action.type === 'reserve' && (slotActionCost > 1 || route.turns - plan.turns < slotActionCost)) continue;
+          audit.verifiedAlternatives++;
+          candidates.push({ action, target, beforeTurns: route.turns, afterTurns: plan.turns,
+            saved: route.turns - plan.turns, plan: plan.actions, slotActionCost,
+            goldReceived: result.state.players[self].tokens.y - state.players[self].tokens.y,
+            discardColors: result.choices.discardColors || [] });
+      }
+      if (!candidates.length) return null;
+      candidates.sort((a, b) => (b.immediateScore || 0) - (a.immediateScore || 0)
+        || b.saved - a.saved || b.target.score - a.target.score
+        || a.target.id.localeCompare(b.target.id) || actionKey(a.action).localeCompare(actionKey(b.action)));
+      const best = candidates[0];
+      return { action: best.action, kind: best.immediateScore ? 'zero-progress-score' : 'zero-progress-route', evidence: {
+        targetId: best.target.id, targetScore: best.target.score, resourceActionsBefore: best.beforeTurns,
+        resourceActionsAfter: best.afterTurns, actionsSaved: best.saved, replayablePlan: best.plan,
+        immediateScoreGain: best.immediateScore || 0, reservedCardId: best.action.type === 'reserve' ? best.action.cardId : null,
+        goldReceived: best.goldReceived, slotActionCost: best.slotActionCost,
+        discardColors: best.discardColors || [],
+      } };
+    }
+
+    function scoringTactic(observation, state, baseAction, rules) {
+      const self = observation.self, player = state.players[self], opponent = state.players[1 - self];
+      const diversity = COLORS.filter(color => player.bonuses[color] > 0).length;
+      const discounts = COLORS.reduce((sum, color) => sum + player.bonuses[color], 0);
+      const mature = discounts >= 4 && diversity >= 3 || (player.cards.length >= 5)
+        || player.score >= 7 || opponent.score >= 9;
+      const baseResult = simulateSettled(state, baseAction, self, rules, 'legacy');
+      const baseGain = baseResult ? baseResult.state.players[self].score - player.score : 0;
+      const candidates = [];
+      for (const action of visibleLegalActions(state, self, rules).filter(value => value.type === 'buy')) {
+        const card = [...[3, 2, 1].flatMap(tier => state.market[tier]), ...player.reserved].find(value => value.id === action.cardId);
+        if (!card || card.score <= 0) continue;
+        const result = pointsAfter(state, action, self, rules);
+        if (!result || result.gained < 2 || result.gained < baseGain + 2) continue;
+        if (!mature && result.gained < 4) continue;
+        candidates.push({ action, gained: result.gained, cardScore: card.score });
+      }
+      if (!candidates.length) return null;
+      candidates.sort((a, b) => b.gained - a.gained || b.cardScore - a.cardScore || actionKey(a.action).localeCompare(actionKey(b.action)));
+      return { ...candidates[0], kind: 'score-purchase', evidence: {
+        cardScore: candidates[0].cardScore, immediateScoreGain: candidates[0].gained,
+        engine: { ownedCards: player.cards.length, discountCount: discounts, discountColors: diversity,
+          score: player.score, opponentScore: opponent.score, mature },
+        actionCost: 1, baselineImmediateScoreGain: baseGain,
+      } };
+    }
+
+    function decide(observation, rules, rng = 0) {
+      if (!rules?.legalActions || observation?.turn !== observation?.self) throw new TypeError('Hybrid expects a current legal observation and P1 rules');
+      const beforeState = stateOf(observation), self = observation.self, legal = visibleLegalActions(beforeState, self, rules);
+      const baseline = Legacy.decide(observation, rng), legacyAction = baseline.action;
+      let action = legacyAction, override = null, settlementChoices = null, adapterFallback = false;
+      const validBase = legacyAction && rules.validateAction(beforeState, legacyAction, self).ok;
+      if (!validBase) {
+        if (!legal.length) return { strategyId: 'hybrid-v1', action: null, nextRng: baseline.nextRng,
+          status: 'blocked_no_legal_action', diagnostics: { legacyAction: legacyAction || null, legalActions: 0, configuration } };
+        action = legal[0];adapterFallback = true;
+      }
+      if (!action) return { strategyId: 'hybrid-v1', action: null, nextRng: baseline.nextRng,
+        status: legal.length ? 'legacy_adapter_failure' : 'blocked_no_legal_action',
+        diagnostics: { legacyAction: null, legalActions: legal.length, configuration } };
+
+      const tacticalState = beforeState, reserveAudit = Object.fromEntries([
+        'calls', 'eligibleDecisions', 'targets', 'candidates', 'rejectedBaseAction', 'rejectedFullSlots',
+        'rejectedNoGold', 'rejectedCommitment', 'rejectedZeroNoUnlock', 'rejectedNoDirectPlan',
+        'rejectedDirectUnderTwo', 'rejectedReserveSimulation', 'rejectedTargetMissing',
+        'rejectedNoPostReservePlan', 'rejectedBeyondTwoActions', 'rejectedNetCost',
+        'rejectedPlanReplay', 'rejectedZeroNoScoringUnlock', 'rejectedBaselineSimulation',
+        'rejectedBaselineTargetMissing', 'rejectedNoBaselinePlan', 'rejectedBaselinePlanReplay',
+        'rejectedImmediateNoTacticalGain',
+        'zeroProgressBase', 'zeroProgressAccepted',
+      ].map(key => [key, 0]));
+      const zeroProgressAudit = { calls: 0, zeroProgressPositions: 0, candidateActions: 0,
+        searchedRoutes: 0, verifiedAlternatives: 0 };
+      if (!adapterFallback && configuration.terminal) override = terminalTactic(observation, tacticalState, action, rules);
+      if (!override && !adapterFallback && configuration.scoring) override = scoringTactic(observation, tacticalState, action, rules);
+      if (!override && !adapterFallback && configuration.reservation) override = reserveTactic(observation, tacticalState, action, rules, reserveAudit);
+      if (!override && !adapterFallback && configuration.zeroProgressComparison) {
+        override = zeroProgressTactic(observation, tacticalState, action, rules, zeroProgressAudit);
+      }
+      if (override?.evidence?.acceptedByZeroProgressComparison) reserveAudit.zeroProgressAccepted++;
+      if (override) action = override.action;
+      const settled = simulateSettled(tacticalState, action, self, rules, override ? 'advanced' : 'legacy');
+      if (settled) settlementChoices = settled.choices;
+      return { strategyId: 'hybrid-v1', action: clone(action), nextRng: baseline.nextRng,
+        settlementChoices: settlementChoices || { discardColors: [] },
+        status: 'ok', diagnostics: { legacyAction: clone(legacyAction), selectedAction: clone(action),
+          override: override ? { kind: override.kind, evidence: override.evidence } : null,
+          adapterFallback, legalActionCount: legal.length, configuration,
+          ...(configuration.reservation ? { reserveAudit } : {}),
+          ...(configuration.zeroProgressComparison ? { zeroProgressAudit } : {}) } };
+    }
+
+    return Object.freeze({ strategyId: 'hybrid-v1', configuration, decide,
+      discardColors: observation => Legacy.discardColors(observation),
+      chooseNoble: (observation, options) => Advanced.chooseNoble(observation, options),
+    });
+  }
+
+  return Object.freeze({ strategyId: 'hybrid-v1', create });
+});
+</script>
+<!-- END GENERATED hybrid-v1 -->
 <script>
 (()=>{'use strict';
 const COLORS=['w','u','g','r','k'],ALL=[...COLORS,'y'];
@@ -744,7 +1932,32 @@ const CARD_POOL=CARD_ROWS.map(([tier,color,score,...counts],ix)=>({
 }));
 const NOBLES=NOBLE_ROWS.map(([name,...counts],i)=>({id:i+1,name,req:Object.fromEntries(['w','u','g','r','k'].map((c,j)=>[c,counts[j]]).filter(([,n])=>n>0))}));
 if(CARD_POOL.length!==90||NOBLES.length!==10||[1,2,3].some((t,i)=>CARD_POOL.filter(c=>c.tier===t).length!==[40,30,20][i]))throw new Error('经典版牌组数量校验失败');
-const Rules=SplendorRules.create(CARD_POOL),Legacy=SplendorLegacyAI;
+const Rules=SplendorRules.create(CARD_POOL),Legacy=SplendorLegacyAI,Advanced=SplendorAdvancedAI;
+const HYBRID_C_CONFIG=Object.freeze({terminal:true,reservation:true,scoring:true,reservationRouteFix:true,zeroProgressComparison:true,planNodes:16});
+const HYBRID_C_CONFIG_ID='b10785820427d5e0cc516c51538ffb9ca019ea5ce9036fadd0aee5b32d392a1c';
+const HybridC=SplendorHybridAI.create(HYBRID_C_CONFIG);
+function policyForState(state=S){
+ if(state?.aiDifficulty==='easy'||state?.aiVersion==='legacy-v1')return Legacy;
+ if(state?.aiVersion==='advanced-v1')return Advanced;
+ if(state?.aiVersion==='hybrid-v1'&&state?.aiConfigId===HYBRID_C_CONFIG_ID)return HybridC;
+ return state?.aiDifficulty==='normal'?Advanced:Legacy;
+}
+function normalizeSavedStrategy(state){
+ const requested=state.aiDifficulty||'easy',unsupported=!['easy','normal'].includes(requested);
+ state.aiDifficulty=unsupported?'easy':requested;
+ if(state.aiDifficulty==='easy'){
+  state.aiVersion='legacy-v1';delete state.aiConfigId;
+ }else if(state.aiVersion==='advanced-v1'||state.aiVersion==='legacy-v1'){
+  delete state.aiConfigId;
+ }else if(state.aiVersion==='hybrid-v1'&&state.aiConfigId===HYBRID_C_CONFIG_ID){
+  // Keep the exact approved Hybrid C configuration across reloads.
+ }else{
+  // Normal saves predating strategy metadata used advanced-v1. Preserve that
+  // historical behavior instead of silently upgrading an existing match.
+  state.aiVersion='advanced-v1';delete state.aiConfigId;
+ }
+ return unsupported;
+}
 
 const $=x=>document.getElementById(x);const rand=n=>Math.floor(Math.random()*n);const clone=o=>JSON.parse(JSON.stringify(o));
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -816,7 +2029,7 @@ function makeMatchSetupHTML(standalone=false,seed='shuffle'){
  return `<div class="match-setup"><h2>💎 ${standalone?'欢迎来到璀璨宝石':'开始新对局'}</h2><p>先选择对战模式并给玩家命名，然后开始。两种模式使用同一套经典规则。</p>
  <div class="match-modes"><label class="match-mode"><input type="radio" name="matchMode" value="ai" ${mode==='ai'?'checked':''}><span><b>👤 玩家 vs AI</b><small>挑战本地策略对手</small></span></label><label class="match-mode"><input type="radio" name="matchMode" value="pvp" ${mode==='pvp'?'checked':''}><span><b>👥 玩家 vs 玩家</b><small>同一台电脑交替操作</small></span></label></div>
  <div class="match-names"><label>玩家1名称<input id="matchName0" maxlength="18" value="${esc(a)}" placeholder="玩家1" autocomplete="off"></label><label><span id="matchOpponentLabel">${mode==='pvp'?'玩家2名称':'对手名称'}</span><input id="matchName1" maxlength="18" value="${esc(b)}" placeholder="${mode==='pvp'?'玩家2':'AI'}" autocomplete="off"></label></div>
- <div class="match-startrow" id="matchDifficultyRow" ${mode==='pvp'?'hidden style="display:none"':''}><label for="matchDifficulty">AI 难度</label><select id="matchDifficulty"><option value="easy" selected>简单（原版 AI）</option><option value="normal" disabled>普通（尚未启用）</option><option value="hard" disabled>困难（尚未启用）</option></select></div>
+ <div class="match-startrow" id="matchDifficultyRow" ${mode==='pvp'?'hidden style="display:none"':''}><label for="matchDifficulty">AI 难度</label><select id="matchDifficulty"><option value="easy" ${S?.aiDifficulty==='normal'?'':'selected'}>简单（原版 AI）</option><option value="normal" ${S?.aiDifficulty==='normal'?'selected':''}>普通</option><option value="hard" disabled>困难（尚未启用）</option></select></div>
  <div class="match-startrow"><label for="matchSeed">开局牌序</label><select id="matchSeed"><option value="shuffle" ${seed==='shuffle'?'selected':''}>🔀 重新洗牌</option>${S?.setup?`<option value="replay" ${seed==='replay'?'selected':''}>↺ 使用当前牌序 #${esc(S.setup.boardId)}</option>`:''}</select></div>
  <div class="note">双人模式中双方轮流操作，双方预留区会在下方同时显示；系统自动处理支付、永久折扣与回合结束。</div>
  <div class="replay-actions"><button class="btn primary" data-act="match-start">✓ 开始游戏</button>${!standalone?'<button class="btn ghost" data-act="match-cancel">取消</button>':''}</div>
@@ -832,18 +2045,18 @@ function openMatchSetup(seed='shuffle'){if(!S){renderLanding();return;}S.modal={
 function startConfiguredMatch(){
  const mode=document.querySelector('input[name="matchMode"]:checked')?.value==='pvp'?'pvp':'ai';
  const names=[($('matchName0')?.value||'').trim().slice(0,18)||'玩家1',($('matchName1')?.value||'').trim().slice(0,18)||(mode==='pvp'?'玩家2':'AI')];
- const difficulty=mode==='ai'?$('matchDifficulty')?.value||'easy':'easy';if(difficulty!=='easy'){alert('普通和困难尚未启用，请选择简单难度。');return;}
+ const difficulty=mode==='ai'?$('matchDifficulty')?.value||'easy':'easy';if(!['easy','normal'].includes(difficulty)){alert('困难模式尚未启用，请选择简单或普通难度。');return;}
  const seed=$('matchSeed')?.value==='replay'&&S?.setup?'replay':'shuffle';
  if(S&&!S.over&&!confirm(`开始新对局（${names[0]} vs ${names[1]}）？当前进行中的回合将重置，建议先导出复盘。`))return;
  newGame(seed,null,{mode,names,difficulty});
 }
 function newGame(mode='shuffle',importedSetup=null,matchConfig=null){
- const difficulty=matchConfig?.difficulty||S?.aiDifficulty||'easy';if(difficulty!=='easy')throw new Error('该AI难度尚未启用');
+ const gameMode=matchConfig?.mode||matchMode(),difficulty=matchConfig?.difficulty||S?.aiDifficulty||'easy';if(!['easy','normal'].includes(difficulty))throw new Error('该AI难度尚未启用');
  clearTimeout(botTimer);botTimer=null;matchGeneration++;
  mobileSection='1';
  queuedFX.length=0;fxBusy=false;if(fxTimeout)clearTimeout(fxTimeout);document.body.classList.remove('fx-busy');document.querySelectorAll('.fx-flight').forEach(x=>x.remove());
  const setup=mode==='restore'?validateBoardSetup(importedSetup):mode==='replay'&&S?.setup?.version==='classic-2014-v1'?clone(S.setup):gameSetupRandom();
- const gameMode=matchConfig?.mode||matchMode(),gameNames=matchConfig?.names||S?.playerNames||['你',gameMode==='pvp'?'玩家2':'AI'];
+ const gameNames=matchConfig?.names||S?.playerNames||['你',gameMode==='pvp'?'玩家2':'AI'];
  if(S?.setup)rememberSetup(S.setup);
  rememberSetup(setup);
  const byId=new Map(CARD_POOL.map(c=>[c.id,c]));
@@ -853,7 +2066,11 @@ function newGame(mode='shuffle',importedSetup=null,matchConfig=null){
   if(deck[t].some(x=>!x||x.tier!==t)||deck[t].length!=={1:40,2:30,3:20}[t])throw new Error('卡牌顺序错误');
   market[t]=Array.from({length:4},()=>deck[t].pop());
  }
- drawerFilter='all';S={rulesVersion:'classic-2014-v1',aiDifficulty:difficulty,aiVersion:'legacy-v1',rulePhase:'action',matchMode:gameMode,playerNames:[...gameNames],setup,botRng:setup.botSeed,bank:Object.fromEntries([...COLORS.map(c=>[c,4]),['y',5]]),market,deck,
+ const replayStrategy=mode==='replay'&&S?.aiDifficulty===difficulty?S.aiVersion:null;
+ const replayConfigId=replayStrategy==='hybrid-v1'&&S?.aiConfigId===HYBRID_C_CONFIG_ID?HYBRID_C_CONFIG_ID:null;
+ const aiVersion=gameMode!=='ai'?'legacy-v1':replayStrategy==='advanced-v1'||replayStrategy==='legacy-v1'?replayStrategy
+  :replayStrategy==='hybrid-v1'&&replayConfigId?replayStrategy:difficulty==='normal'?'hybrid-v1':'legacy-v1';
+ drawerFilter='all';S={rulesVersion:'classic-2014-v1',aiDifficulty:difficulty,aiVersion,...(aiVersion==='hybrid-v1'?{aiConfigId:HYBRID_C_CONFIG_ID}:{}),rulePhase:'action',matchMode:gameMode,playerNames:[...gameNames],setup,botRng:setup.botSeed,bank:Object.fromEntries([...COLORS.map(c=>[c,4]),['y',5]]),market,deck,
   nobles:setup.nobleIds.map(id=>clone(NOBLES.find(n=>n.id===id))),players:[mkPlayer(),mkPlayer()],turn:0,round:1,over:false,endTrigger:false,
   history:[{who:'sys',text:mode==='restore'?'已从牌序备份恢复完整牌堆与贵族。':mode==='replay'?'原牌序重玩：三级牌堆和贵族与上一局完全相同。':'经典牌组已洗牌：90张卡牌、10位贵族中随机选3位。'}],
   selected:null,tokenMode:'diff',tokenSel:[],coach:false,modal:null,
@@ -1031,7 +2248,8 @@ function gainNoble(who,id){return applyRuleAction({type:'noble',id},who)}
 function autoDiscard(who){
  if(cnt(S.players[who].tokens)<=10)return;
  if(Rules.prepareSettlement(S,who).type!=='discard')return;
- for(const color of Legacy.discardColors(Rules.observe(S,who))){if(!applyRuleAction({type:'discard',color},who,true))throw new Error('AI归还筹码校验失败')}
+ const observation=Rules.observe(S,who),colors=policyForState(S).discardColors(observation,Rules);
+ for(const color of colors){if(!applyRuleAction({type:'discard',color},who,true))throw new Error('AI归还筹码校验失败')}
 }
 function gameOver(){const winnerSide=Rules.winnerSide(S),winner=winnerSide<0?'平局':playerLabel(winnerSide);
  S.over=true;S.rulePhase='over';S.modal={type:'end',winner,winnerSide};putLog('sys',`对局结束：${playerLabel(0)} ${S.players[0].score} 分，${playerLabel(1)} ${S.players[1].score} 分。胜者：${winner}`,{type:'end',winner});save();render();}
@@ -1050,7 +2268,9 @@ function afterAction(who){
  }
  if(pending.type==='noble'){
   if(isHumanTurn()&&pending.options.length>1){S.modal=pending;save();render();return}
-  if(!gainNoble(who,pending.options[0]))return;
+  const policy=policyForState(S),nobleId=matchMode()==='ai'&&who===1&&policy.chooseNoble
+   ?policy.chooseNoble(Rules.observe(S,who),pending.options):pending.options[0];
+  if(!gainNoble(who,nobleId))return;
  }
  if(pending.type!=='invalid')goNext(who);
 }
@@ -1092,15 +2312,15 @@ function scheduleBot(delay=animationOn&&!window.matchMedia('(prefers-reduced-mot
 }
 function botTurn(){
  if(matchMode()!=='ai'||S.over||S.turn!==1||S.modal||(S.rulePhase&&S.rulePhase!=='action'))return;
- if(S.aiDifficulty&&S.aiDifficulty!=='easy')throw new Error('该AI难度尚未启用');
- const decision=Legacy.decide(Rules.observe(S,1),S.botRng);
+ if(S.aiDifficulty&& !['easy','normal'].includes(S.aiDifficulty))throw new Error('该AI难度尚未启用');
+ const policy=policyForState(S),observation=Rules.observe(S,1),decision=policy===Legacy?Legacy.decide(observation,S.botRng):policy.decide(observation,Rules,S.botRng);
  if(!decision.action){
   // Preserve the original no-candidate fallback; pass is not a core legal action.
   S.botRng=decision.nextRng;putLog('sys','AI 当前没有可执行行动。');S.rulePhase='complete';goNext(1);return;
  }
- if(!Rules.validateAction(S,decision.action,1).ok)throw new Error('legacy-v1行动与核心规则冲突');
+ if(!Rules.validateAction(S,decision.action,1).ok)throw new Error(`${decision.strategyId}行动与核心规则冲突`);
  S.botRng=decision.nextRng;
- if(!applyRuleAction(decision.action,1))throw new Error('legacy-v1行动执行失败');
+ if(!applyRuleAction(decision.action,1))throw new Error(`${decision.strategyId}行动执行失败`);
  afterAction(1);
 }
 const costHTML=(card,p)=>COLORS.filter(c=>card.cost[c]).map(c=>{let n=card.cost[c];return `<span class="cost" title="原始费用：${C[c].name}${n}">${gem(c)}${n}</span>`}).join('');
@@ -1271,7 +2491,7 @@ else if(d.act==='reserve'){playerReserve()}
 else if(d.act==='blind'){playerBlind(Number(d.tier))}
 else if(d.act==='discard'){discardOne(d.color)}
 else if(d.act==='noble'){endModalChoice(Number(d.id))}}
-try{const saved=JSON.parse(localStorage.getItem('splendor_classic_v4')||'null');if(saved&&saved.rulesVersion==='classic-2014-v1'&&saved.setup?.version==='classic-2014-v1'&&saved.players?.length===2&&saved.market&&saved.bank){S=saved;if(!Array.isArray(S.replay))S.replay=[{index:0,round:S.round,actor:'system',text:'从旧版存档升级；此前的详细行动不可追溯',action:{type:'migrated'},reason:'',publicBoardAfter:publicSnapshot()}];if(!('turnNote'in S))S.turnNote='';if(!S.matchMode)S.matchMode='ai';if(!Array.isArray(S.playerNames)||S.playerNames.length!==2)S.playerNames=['你','AI'];S.coach=false;const unsupported=S.aiDifficulty&&S.aiDifficulty!=='easy';S.aiDifficulty='easy';S.aiVersion='legacy-v1';S.rulePhase=S.over?'over':S.modal?.type==='discard'?'discard':S.modal?.type==='noble'?'noble':S.rulePhase||'action';if(unsupported&&matchMode()==='ai')S.notice='原存档的AI难度尚未启用，本局继续使用简单（legacy-v1）。';}}catch(e){}
+try{const saved=JSON.parse(localStorage.getItem('splendor_classic_v4')||'null');if(saved&&saved.rulesVersion==='classic-2014-v1'&&saved.setup?.version==='classic-2014-v1'&&saved.players?.length===2&&saved.market&&saved.bank){S=saved;if(!Array.isArray(S.replay))S.replay=[{index:0,round:S.round,actor:'system',text:'从旧版存档升级；此前的详细行动不可追溯',action:{type:'migrated'},reason:'',publicBoardAfter:publicSnapshot()}];if(!('turnNote'in S))S.turnNote='';if(!S.matchMode)S.matchMode='ai';if(!Array.isArray(S.playerNames)||S.playerNames.length!==2)S.playerNames=['你','AI'];S.coach=false;const unsupported=normalizeSavedStrategy(S);S.rulePhase=S.over?'over':S.modal?.type==='discard'?'discard':S.modal?.type==='noble'?'noble':S.rulePhase||'action';if(unsupported&&matchMode()==='ai')S.notice='原存档的AI难度尚未启用，本局继续使用简单（legacy-v1）。';}}catch(e){}
 window.addEventListener('resize',fitDrawerHeight);
 document.addEventListener('click',e=>{
  const button=e.target.closest('button[data-drawer]');if(!button)return;

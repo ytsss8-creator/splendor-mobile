@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, '..');
 const file = path.join(root, 'index.html');
 let html = fs.readFileSync(file, 'utf8');
 const check = process.argv.includes('--check');
-for (const name of ['rules', 'legacy-v1']) {
+for (const name of ['rules', 'legacy-v1', 'advanced-v1', 'hybrid-v1']) {
   const source = fs.readFileSync(path.join(root, `js/${name}.js`), 'utf8').trimEnd();
   if (/<\/script/i.test(source)) throw new Error(`Unsafe inline script content: ${name}`);
   const start = `<!-- BEGIN GENERATED ${name} -->`, end = `<!-- END GENERATED ${name} -->`;

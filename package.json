@@ -2,11 +2,12 @@
   "name": "splendor-mobile",
   "version": "0.0.0",
   "private": true,
-  "description": "Static Splendor game with dependency-free baseline regression tests",
+  "description": "Static Splendor game with isolated classic rules and AI regression tests",
   "scripts": {
     "test": "node scripts/sync-inline.cjs --check && node tests/run-tests.cjs",
     "sync:inline": "node scripts/sync-inline.cjs",
     "test:browser": "node scripts/browser-regression.cjs",
+    "test:ai-smoke": "node scripts/ai-smoke.cjs 20",
     "test:legacy": "node tests/legacy.test.cjs",
     "test:rules": "node tests/rules.test.cjs",
     "test:compat": "node tests/compat.test.cjs"

@@ -1,4 +1,5 @@
 'use strict';
+require('../tests/helpers/p3-playwright-env.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
@@ -6,6 +7,13 @@ const os = require('node:os');
 const assert = require('node:assert/strict');
 const { pathToFileURL } = require('node:url');
 const { ROOT, fixture, expandDecisionInput, startGame, loadGame, plain, giveTokens } = require('../tests/helpers/game-harness.cjs');
+const Hybrid = require('../js/hybrid-v1.js');
+const HybridCConfig = Object.freeze({ terminal: true, reservation: true, scoring: true,
+  reservationRouteFix: true, zeroProgressComparison: true, planNodes: 16 });
+const HybridCConfigId = 'b10785820427d5e0cc516c51538ffb9ca019ea5ce9036fadd0aee5b32d392a1c';
+const actionFromReplay = event => event.action.type === 'take' ? { type: 'take', colors: event.action.colors }
+  : event.action.type === 'blind_reserve' ? { type: 'blind_reserve', tier: event.action.tier }
+    : { type: event.action.type, cardId: event.action.card.id };
 const playwright = require(process.env.SPLENDOR_PLAYWRIGHT_MODULE || 'playwright');
 const reportDir = process.env.SPLENDOR_BROWSER_REPORT_DIR || path.join(os.tmpdir(), 'splendor-p1-browser-report');
 fs.mkdirSync(reportDir, { recursive: true });
@@ -78,7 +86,7 @@ async function main() {
       try {
         await run('difficulty options and PvP visibility', {}, async page => {
           assert.equal(await page.locator('#matchDifficultyRow').isVisible(), true);
-          assert.equal(await page.locator('option[value="normal"]').isDisabled(), true);
+          assert.equal(await page.locator('option[value="normal"]').isDisabled(), false);
           assert.equal(await page.locator('option[value="hard"]').isDisabled(), true);
           await page.locator('input[name="matchMode"][value="pvp"]').check();
           assert.equal(await page.locator('#matchDifficultyRow').isVisible(), false);
@@ -88,6 +96,78 @@ async function main() {
           const state = await readState(page);
           assert.equal(state.aiDifficulty, 'easy');assert.equal(state.aiVersion, 'legacy-v1');
           assert.equal(state.matchMode, 'ai');assert.equal(state.rulePhase, 'action');
+        });
+
+        await run('normal difficulty executes frozen Hybrid C and persists its configuration', {}, async page => {
+          await page.locator('#matchDifficulty').selectOption('normal');
+          await page.locator('[data-act="match-start"]').click();
+          let state = await readState(page);assert.equal(state.aiDifficulty, 'normal');assert.equal(state.aiVersion, 'hybrid-v1');
+          assert.equal(state.aiConfigId, HybridCConfigId);
+          await takeThree(page);
+          const pending = await readState(page);
+          const { create: createRules } = require('../js/rules.js');
+          const cards = fixture('classic-data-v1.json').cards;
+          const rules = createRules(cards), expected = Hybrid.create(HybridCConfig).decide(rules.observe(pending, 1), rules, pending.botRng);
+          await waitState(page, () => { const s = JSON.parse(localStorage.getItem('splendor_classic_v4'));return s.turn === 0 && s.round === 2; });
+          state = await readState(page);assert.equal(state.aiDifficulty, 'normal');assert.equal(state.aiVersion, 'hybrid-v1');assert.equal(state.aiConfigId, HybridCConfigId);
+          const actual = state.replay.findLast(event => event.actor === 'bot' && ['take', 'buy', 'reserve', 'blind_reserve'].includes(event.action.type));
+          assert.deepEqual(actionFromReplay(actual), expected.action, 'The live page dispatcher executes the frozen C policy');
+          await page.reload();state = await readState(page);
+          assert.equal(state.aiVersion, 'hybrid-v1');assert.equal(state.aiConfigId, HybridCConfigId);
+        });
+
+        await run('embedded Hybrid C matches the source module on a fixed public observation', { saved: { ...fixture('save-ai-initial.json'), matchMode: 'pvp' } }, async page => {
+          const cards = fixture('classic-data-v1.json').cards, core = require('../js/rules.js').create(cards);
+          const sourcePolicy = Hybrid.create(HybridCConfig);
+          const samples = [7, 152].map(index => {
+            const state = expandDecisionInput(fixture('legacy-decisions-v1.json').cases[index].input);
+            state.turn = 1;state.rulePhase = 'action';
+            const observation = plain(core.observe(state, 1)), rng = state.botRng || 1;
+            return { observation, rng, decision: sourcePolicy.decide(observation, core, rng) };
+          });
+          assert.equal(samples[0].decision.settlementChoices.nobleId, 1, 'The fixed purchase selects a noble');
+          assert.deepEqual(samples[1].decision.settlementChoices.discardColors, ['w'], 'The fixed reserve includes its overflow return');
+          const embedded = await page.evaluate(({ cards, samples, config }) => {
+            const core = SplendorRules.create(cards), policy = SplendorHybridAI.create(config);
+            return samples.map(sample => policy.decide(sample.observation, core, sample.rng));
+          }, { cards, samples: samples.map(({ observation, rng }) => ({ observation, rng })), config: HybridCConfig });
+          for (const [index, result] of embedded.entries()) {
+            assert.deepEqual(result.action, plain(samples[index].decision.action));
+            assert.deepEqual(result.settlementChoices, plain(samples[index].decision.settlementChoices));
+            assert.equal(result.nextRng, samples[index].decision.nextRng);
+          }
+        });
+
+        const cSpecificState = expandDecisionInput(fixture('legacy-decisions-v1.json').cases[113].input);
+        Object.assign(cSpecificState, { aiDifficulty: 'normal', aiVersion: 'hybrid-v1', aiConfigId: HybridCConfigId,
+          matchMode: 'ai', turn: 1, rulePhase: 'action', modal: null });
+        await run('normal page dispatch uses C rather than the default A configuration', { saved: cSpecificState }, async page => {
+          const cards = fixture('classic-data-v1.json').cards, core = require('../js/rules.js').create(cards);
+          const observation = core.observe(cSpecificState, 1);
+          const expected = Hybrid.create(HybridCConfig).decide(observation, core, cSpecificState.botRng || 1);
+          const defaultA = Hybrid.create().decide(observation, core, cSpecificState.botRng || 1);
+          assert.notDeepEqual(expected.action, defaultA.action, 'This state distinguishes C from the module default A');
+          await waitState(page, () => { const s = JSON.parse(localStorage.getItem('splendor_classic_v4'));return s.turn === 0 && (s.round > 10 || s.over); });
+          const state = await readState(page), actual = state.replay.findLast(event => event.actor === 'bot' && ['take', 'buy', 'reserve', 'blind_reserve'].includes(event.action.type));
+          assert.equal(state.aiConfigId, HybridCConfigId);
+          assert.deepEqual(actionFromReplay(actual), expected.action);
+        });
+
+        await run('historical normal advanced-v1 save remains on advanced-v1', { saved: (() => {
+          const value = { ...fixture('save-ai-midgame.json'), aiDifficulty: 'normal', aiVersion: 'advanced-v1',
+            matchMode: 'ai', turn: 1, rulePhase: 'action', modal: null, over: false };
+          return value;
+        })() }, async page => {
+          const initial = await readState(page);assert.equal(initial.aiVersion, 'advanced-v1');
+          const expected = await page.evaluate(cards => {
+            const saved = JSON.parse(localStorage.getItem('splendor_classic_v4'));
+            const rules = SplendorRules.create(cards);
+            return SplendorAdvancedAI.decide(rules.observe(saved, 1), rules, saved.botRng).action;
+          }, fixture('classic-data-v1.json').cards);
+          await waitState(page, () => { const s = JSON.parse(localStorage.getItem('splendor_classic_v4'));return s.turn === 0 && s.round > 1; });
+          const state = await readState(page);assert.equal(state.aiVersion, 'advanced-v1');
+          const actual = state.replay.findLast(event => event.actor === 'bot' && ['take', 'buy', 'reserve', 'blind_reserve'].includes(event.action.type));
+          assert.deepEqual(actionFromReplay(actual), expected);
         });
 
         await run('human vs AI action and legacy equality', { saved: fixture('save-ai-initial.json') }, async page => {
@@ -241,7 +321,13 @@ async function main() {
         });
 
         await run('local standalone HTML requires no external scripts', { file: true }, async (page, { requests }) => {
-          await page.locator('[data-act="match-start"]').click();assert.equal((await readState(page)).aiDifficulty, 'easy');
+          await page.locator('#matchDifficulty').selectOption('normal');
+          await page.locator('[data-act="match-start"]').click();
+          const initial = await readState(page);
+          assert.equal(initial.aiDifficulty, 'normal');assert.equal(initial.aiVersion, 'hybrid-v1');assert.equal(initial.aiConfigId, HybridCConfigId);
+          await takeThree(page);
+          await waitState(page, () => { const s = JSON.parse(localStorage.getItem('splendor_classic_v4'));return s.turn === 0 && s.round === 2; });
+          assert.equal((await readState(page)).aiVersion, 'hybrid-v1');
           assert.equal(await page.locator('script[src]').count(), 0);
           assert.ok(requests.every(request => request.startsWith('file:')), 'No network dependency');
         });
@@ -256,6 +342,22 @@ async function main() {
             return { samples: samples.length, p50Ms: samples[Math.floor(samples.length * .5)], p95Ms: samples[Math.floor(samples.length * .95)], p99Ms: samples[Math.floor(samples.length * .99)], maxMs: samples.at(-1) };
           }, { cards: fixture('classic-data-v1.json').cards, inputs });
           assert.ok(timings.p95Ms < 20, 'Legacy policy+observation P95 stays below 20ms on this host');
+          const hybridTimings = await page.evaluate(({ cards, inputs, config }) => {
+            const core = SplendorRules.create(cards), policy = SplendorHybridAI.create(config), samples = [];
+            for (const [index, state] of inputs.entries()) {
+              const start = performance.now(), observation = core.observe(state, 1);
+              const result = policy.decide(observation, core, state.botRng || 1);
+              samples.push({ index, round: state.round, score: state.players[1].score, opponentScore: state.players[0].score,
+                cards: state.players[1].cards.length, elapsed: performance.now() - start,
+                legal: !!result.action && core.validateAction(state, result.action, 1).ok });
+            }
+            const values = samples.map(sample => sample.elapsed).sort((a, b) => a - b), percentile = p => values[Math.min(values.length - 1, Math.floor(values.length * p))];
+            const slowest = samples.reduce((best, sample) => sample.elapsed > best.elapsed ? sample : best);
+            return { samples: values.length, p50Ms: percentile(.5), p95Ms: percentile(.95), p99Ms: percentile(.99), maxMs: values.at(-1),
+              slowest: { index: slowest.index, round: slowest.round, score: slowest.score, opponentScore: slowest.opponentScore, cards: slowest.cards },
+              allLegal: samples.every(sample => sample.legal) };
+          }, { cards: fixture('classic-data-v1.json').cards, inputs, config: HybridCConfig });
+          assert.ok(hybridTimings.allLegal, 'Hybrid C returns a legal action for each live test state');
           const handlerSamples = [];
           for (let repeat = 0; repeat < 12; repeat++) {
             if (repeat) { await page.evaluate(saved => localStorage.setItem('splendor_classic_v4', JSON.stringify(saved)), { ...fixture('save-ai-initial.json'), matchMode: 'pvp' });await page.reload(); }
@@ -277,9 +379,31 @@ async function main() {
             assert.equal((await readState(page)).turn, 1);baselineHandlerSamples.push(elapsed);
           }
           baselineHandlerSamples.sort((a, b) => a - b);
-          report.performance.push({ engine, profile: 'desktop-host', policy: timings,
+          report.performance.push({ engine, profile: 'desktop-host', legacyPolicy: timings, hybridCPolicy: hybridTimings,
             actionHandler: { samples: handlerSamples.length, p50Ms: handlerSamples[6], p95Ms: handlerSamples[11], maxMs: handlerSamples.at(-1) },
             baselineActionHandler: { samples: baselineHandlerSamples.length, p50Ms: baselineHandlerSamples[6], p95Ms: baselineHandlerSamples[11], maxMs: baselineHandlerSamples.at(-1) } });
+        });
+
+        await run('Hybrid C mobile viewport decision performance', { profile: 'portrait', saved: { ...fixture('save-ai-initial.json'), matchMode: 'pvp' } }, async page => {
+          const inputs = fixture('legacy-decisions-v1.json').cases.map(sample => expandDecisionInput(sample.input));
+          const timings = await page.evaluate(({ cards, inputs, config }) => {
+            const core = SplendorRules.create(cards), policy = SplendorHybridAI.create(config), values = [];
+            for (const [index, state] of inputs.entries()) {
+              const start = performance.now(), observation = core.observe(state, 1);
+              const result = policy.decide(observation, core, state.botRng || 1);
+              values.push({ index, round: state.round, score: state.players[1].score, opponentScore: state.players[0].score,
+                cards: state.players[1].cards.length, elapsed: performance.now() - start,
+                legal: !!result.action && core.validateAction(state, result.action, 1).ok });
+            }
+            values.sort((a, b) => a.elapsed - b.elapsed);
+            const percentile = p => values[Math.min(values.length - 1, Math.floor(values.length * p))].elapsed;
+            return { samples: values.length, p50Ms: percentile(.5), p95Ms: percentile(.95), p99Ms: percentile(.99),
+              maxMs: values.at(-1).elapsed, slowest: { index: values.at(-1).index, round: values.at(-1).round,
+                score: values.at(-1).score, opponentScore: values.at(-1).opponentScore, cards: values.at(-1).cards },
+              allLegal: values.every(value => value.legal) };
+          }, { cards: fixture('classic-data-v1.json').cards, inputs, config: HybridCConfig });
+          assert.ok(timings.allLegal, 'Hybrid C returns legal moves in a mobile viewport');
+          report.performance.push({ engine, profile: 'mobile-portrait-emulation', hybridCPolicy: timings });
         });
       } finally { await browser.close(); }
     }
