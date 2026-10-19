@@ -11,6 +11,7 @@ const Hybrid = require('../js/hybrid-v1.js');
 const HybridCConfig = Object.freeze({ terminal: true, reservation: true, scoring: true,
   reservationRouteFix: true, zeroProgressComparison: true, planNodes: 16 });
 const HybridCConfigId = 'b10785820427d5e0cc516c51538ffb9ca019ea5ce9036fadd0aee5b32d392a1c';
+const V2CConfigId = '79d417842cf84f158a08d3db4910fd8ffd4d2f5e3c82e6a83df67485fb63d572';
 const actionFromReplay = event => event.action.type === 'take' ? { type: 'take', colors: event.action.colors }
   : event.action.type === 'blind_reserve' ? { type: 'blind_reserve', tier: event.action.tier }
     : { type: event.action.type, cardId: event.action.card.id };
@@ -87,7 +88,8 @@ async function main() {
         await run('difficulty options and PvP visibility', {}, async page => {
           assert.equal(await page.locator('#matchDifficultyRow').isVisible(), true);
           assert.equal(await page.locator('option[value="normal"]').isDisabled(), false);
-          assert.equal(await page.locator('option[value="hard"]').isDisabled(), true);
+          assert.equal(await page.locator('option[value="hard"]').isDisabled(), false);
+          assert.match(await page.locator('option[value="hard"]').innerText(), /困难（实验版）/);
           await page.locator('input[name="matchMode"][value="pvp"]').check();
           assert.equal(await page.locator('#matchDifficultyRow').isVisible(), false);
           await page.locator('input[name="matchMode"][value="ai"]').check();
@@ -330,6 +332,28 @@ async function main() {
           assert.equal((await readState(page)).aiVersion, 'hybrid-v1');
           assert.equal(await page.locator('script[src]').count(), 0);
           assert.ok(requests.every(request => request.startsWith('file:')), 'No network dependency');
+        });
+
+        await run('hard V2 C runs from standalone HTML and survives save restore', { file: true }, async (page, { requests }) => {
+          assert.equal(await page.evaluate(() => typeof SplendorV2Search?.create === 'function'), true,
+            'The synced standalone page loads the embedded V2 module');
+          await page.locator('#matchDifficulty').selectOption('hard');
+          await page.locator('[data-act="match-start"]').click();
+          let state = await readState(page);
+          assert.equal(state.aiDifficulty, 'hard');assert.equal(state.aiVersion, 'v2-search');assert.equal(state.aiConfigId, V2CConfigId);
+          assert.equal(await page.locator('script[src]').count(), 0);
+          await takeThree(page);
+          const pending = await readState(page), cards = fixture('classic-data-v1.json').cards;
+          const core = require('../js/rules.js').create(cards);
+          await waitState(page, () => { const s = JSON.parse(localStorage.getItem('splendor_classic_v4'));return s.turn === 0 && s.round === 2; });
+          state = await readState(page);
+          assert.equal(state.aiVersion, 'v2-search');assert.equal(state.aiConfigId, V2CConfigId);
+          const actual = state.replay.findLast(event => event.actor === 'bot' && ['take', 'buy', 'reserve', 'blind_reserve'].includes(event.action.type));
+          assert.ok(actual, 'The live game records a hard AI turn');
+          assert.equal(core.validateAction(pending, actionFromReplay(actual), 1).ok, true, 'The hard action passes core legality checks');
+          await page.reload();state = await readState(page);
+          assert.equal(state.aiDifficulty, 'hard');assert.equal(state.aiVersion, 'v2-search');assert.equal(state.aiConfigId, V2CConfigId);
+          assert.ok(requests.every(request => request.startsWith('file:')), 'The V2 hard game has no network dependency');
         });
 
         await run('policy and complete action-handler performance', { saved: { ...fixture('save-ai-initial.json'), matchMode: 'pvp' } }, async page => {

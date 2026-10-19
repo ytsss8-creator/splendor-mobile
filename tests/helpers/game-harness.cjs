@@ -116,6 +116,10 @@ globalThis.game={
   hybrid:typeof HybridC==='undefined'?null:HybridC,
   hybridConfig:typeof HYBRID_C_CONFIG==='undefined'?null:HYBRID_C_CONFIG,
   hybridConfigId:typeof HYBRID_C_CONFIG_ID==='undefined'?null:HYBRID_C_CONFIG_ID,
+  v2:typeof V2C==='undefined'?null:V2C,
+  v2Config:typeof V2_C_CONFIG==='undefined'?null:V2_C_CONFIG,
+  v2ConfigId:typeof V2_C_CONFIG_ID==='undefined'?null:V2_C_CONFIG_ID,
+  safeV2Decision:typeof v2DecisionOrHybrid==='undefined'?null:v2DecisionOrHybrid,
   policyForState:typeof policyForState==='undefined'?null:policyForState,
   observation:who=>typeof Rules==='undefined'?null:Rules.observe(S,who),
   getState:()=>S,setState:value=>{S=value}

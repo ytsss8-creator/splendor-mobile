@@ -19,7 +19,8 @@ for (const mode of ['ai', 'pvp']) {
     const { api } = startGame({ mode }), html = api.makeMatchSetupHTML();
     assert.match(html, /value="easy" selected/);
     assert.match(html, /value="normal"[^>]*>普通/);
-    assert.match(html, /value="hard" disabled>困难（尚未启用）/);
+    assert.match(html, /value="hard"[^>]*>困难（实验版）/);
+    assert.doesNotMatch(html, /value="hard" disabled/);
     if (mode === 'pvp') assert.match(html, /id="matchDifficultyRow" hidden style="display:none"/);
     else assert.doesNotMatch(html, /id="matchDifficultyRow" hidden/);
   });
@@ -48,14 +49,75 @@ for (const name of ['save-ai-initial.json', 'save-ai-pending.json', 'save-ai-mid
   });
 }
 
-test('unsupported difficulty cannot silently start a new game or advance the RNG', () => {
+test('unknown difficulty cannot silently start a new game or advance the RNG', () => {
   const { api } = startGame(), state = api.getState(), before = plain(state);
-  assert.throws(() => api.newGame('shuffle', null, { mode: 'ai', difficulty: 'hard' }), /尚未启用/);
+  assert.throws(() => api.newGame('shuffle', null, { mode: 'ai', difficulty: 'future-test' }), /尚未启用/);
   assert.deepEqual(plain(api.getState()), before);
-  state.turn = 1;state.aiDifficulty = 'hard';
+  state.turn = 1;state.aiDifficulty = 'future-test';
   const unsupported = plain(state);
   assert.throws(() => api.botTurn(), /尚未启用/);
   assert.deepEqual(plain(state), unsupported);
+});
+
+test('hard starts and dispatches frozen V2 C, and reload preserves its exact policy identity', () => {
+  const { api } = startGame();
+  api.newGame('shuffle', null, { mode: 'ai', names: ['玩家1', 'AI'], difficulty: 'hard' });
+  const state = api.getState();
+  assert.equal(state.aiDifficulty, 'hard');assert.equal(state.aiVersion, 'v2-search');
+  assert.equal(state.aiConfigId, '79d417842cf84f158a08d3db4910fd8ffd4d2f5e3c82e6a83df67485fb63d572');
+  assert.equal(api.policyForState(state), api.v2);
+  assert.deepEqual(plain(api.v2Config), { enabled: true, mode: 'minimax', tacticalTrigger: false,
+    endgameRaceEvaluation: false, rootTopK: 6, responseTopK: 4, maxNodes: 320,
+    maxExpansions: 320, timeBudgetMs: 180, uncertaintyPenalty: 0.75, debug: true });
+  assert.equal(crypto.createHash('sha256').update(JSON.stringify(plain(api.v2Config))).digest('hex'), api.v2ConfigId);
+  assert.equal(api.v2.configuration.timeBudgetMs, 180);assert.equal(api.v2.configuration.maxNodes, 320);
+  state.turn = 1;state.rulePhase = 'action';
+  const before = plain(state), observation = api.observation(1), decision = api.v2.decide(observation, api.rules, state.botRng);
+  assert.ok(decision.action, 'Frozen V2 C selects a root action for the initial legal position');
+  assert.equal(api.rules.validateAction(before, decision.action, 1).ok, true);
+  api.botTurn();
+  assert.equal(state.aiVersion, 'v2-search');assert.equal(state.aiConfigId, api.v2ConfigId);
+  const event = state.replay.findLast(value => value.actor === 'bot' && ['take', 'buy', 'reserve', 'blind_reserve'].includes(value.action.type));
+  assert.ok(event, 'The standalone game dispatcher records the hard AI action');
+  assert.equal(api.rules.validateAction(before, actionFromEvent(event), 1).ok, true);
+  const restored = loadGame({ saved: plain(state) }).api.getState();
+  assert.equal(restored.aiDifficulty, 'hard');assert.equal(restored.aiVersion, 'v2-search');
+  assert.equal(restored.aiConfigId, api.v2ConfigId);
+});
+
+test('illegal V2 action triggers a legal Hybrid C exception fallback', () => {
+  const { api } = startGame(), state = api.getState();state.turn = 1;state.rulePhase = 'action';
+  const observation = api.observation(1), rng = state.botRng;
+  const expected = api.hybrid.decide(observation, api.rules, rng);
+  for (const candidate of [
+    { decide: () => ({ action: { type: 'take', colors: ['y', 'y', 'y'] } }) },
+    { decide: () => { throw new Error('injected V2 failure'); } },
+  ]) {
+    const fallback = api.safeV2Decision(observation, rng, candidate);
+    assert.deepEqual(plain(fallback.action), plain(expected.action));
+    assert.equal(api.rules.validateAction(state, fallback.action, 1).ok, true);
+  }
+});
+
+test('hard bot applies its complete discard and noble settlement choices through core rules', () => {
+  const overflow = startGame();
+  overflow.api.newGame('shuffle', null, { mode: 'ai', names: ['玩家1', 'AI'], difficulty: 'hard' });
+  Object.assign(overflow.api.getState(), { turn: 1, rulePhase: 'action' });
+  giveTokens(overflow.api, 1, { w: 3, u: 3, g: 3 });
+  assert.equal(overflow.api.take(['r', 'k', 'w'], 1), true);
+  overflow.api.afterAction(1, { discardColors: ['w', 'u'] });
+  const discards = overflow.api.getState().replay.filter(event => event.actor === 'bot' && event.action.type === 'discard');
+  assert.deepEqual(plain(discards.map(event => event.action.color)), ['w', 'u']);
+  assert.equal(Object.values(overflow.api.getState().players[1].tokens).reduce((sum, value) => sum + value, 0), 10);
+
+  const noble = startGame();
+  noble.api.newGame('shuffle', null, { mode: 'ai', names: ['玩家1', 'AI'], difficulty: 'hard' });
+  const live = noble.api.getState();live.turn = 1;live.rulePhase = 'settle';
+  for (const color of noble.api.COLORS) live.players[1].bonuses[color] = 5;
+  const eligible = noble.api.eligible(1), selected = eligible.at(-1).id;
+  assert.ok(eligible.length > 1);
+  noble.api.afterAction(1, { nobleId: selected });
+  assert.deepEqual(plain(live.players[1].nobles.map(value => value.id)), [selected]);
 });
 
 test('normal starts and runs the frozen Hybrid C configuration while easy remains legacy-v1', () => {
@@ -125,6 +187,23 @@ test('Hybrid C observations omit hidden decks and the opponent private reserved-
   assert.equal('score' in hidden, false);assert.equal('cost' in hidden, false);
   const decision = api.hybrid.decide(observation, api.rules, state.botRng);
   assert.ok(decision.action);
+});
+
+test('V2 C receives only the public observation, including when hidden deck order changes', () => {
+  const { api } = startGame({ mode: 'pvp' }), state = api.getState();
+  assert.equal(api.blindReserve(1, 0), true);
+  state.turn = 1;state.rulePhase = 'action';
+  const observation = api.observation(1), serialized = JSON.stringify(observation), hiddenIds = state.deck[1].map(card => card.id);
+  assert.equal('deck' in observation, false);assert.equal('setup' in observation, false);
+  assert.equal(observation.players[0].reserved[0].faceDown, true);
+  assert.equal('id' in observation.players[0].reserved[0], false);
+  for (const tier of [1, 2, 3]) state.deck[tier].reverse();
+  const afterShuffleObservation = api.observation(1);
+  assert.equal(JSON.stringify(afterShuffleObservation), serialized);
+  const decision = api.v2.decide(observation, api.rules, state.botRng);
+  assert.ok(decision.action);
+  assert.equal(api.rules.validateAction(state, decision.action, 1).ok, true);
+  assert.notDeepEqual(state.deck[1].map(card => card.id), hiddenIds);
 });
 
 for (const [name, phase] of [['save-pvp-discard.json', 'discard'], ['save-pvp-noble.json', 'noble']]) {
